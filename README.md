@@ -85,7 +85,7 @@ Requisitos do projeto:
 
 - Android Studio atual;
 - JDK 17;
-- Android SDK 37;
+- Android SDK 36;
 - AGP 9.3.1;
 - Gradle 9.5.0.
 
@@ -143,15 +143,14 @@ android/
 
 ## Próximas etapas
 
-1. obter um build verde no GitHub Actions;
-2. instalar o APK no aparelho físico;
-3. validar autenticação com a conta cTrader demo autorizada;
-4. conferir XAUUSD e precisão de preços da corretora;
-5. comparar candles M5/M15 do Priore com o cTrader lado a lado;
-6. registrar histórico de sinais e resultado posterior;
-7. adicionar pre-alerta de aproximação de nível;
-8. adicionar filtro de spread, sessão e notícias de alto impacto;
-9. calibrar a estratégia com dados reais antes de qualquer discussão sobre execução automática.
+1. instalar o APK no aparelho físico;
+2. validar autenticação com a conta cTrader demo autorizada;
+3. conferir XAUUSD e precisão de preços da corretora;
+4. comparar candles M5/M15 do Priore com o cTrader lado a lado;
+5. registrar histórico de sinais e resultado posterior;
+6. adicionar pre-alerta de aproximação de nível;
+7. adicionar filtro de spread, sessão e notícias de alto impacto;
+8. calibrar a estratégia com dados reais antes de qualquer discussão sobre execução automática.
 
 ## Aviso
 
