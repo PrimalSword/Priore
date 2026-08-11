@@ -2,6 +2,15 @@
 .env
 .env.*
 !.env.example
+*.pem
+*service-account*.json
+
+# Android local configuration / build
+android/local.properties
+android/.gradle/
+android/**/build/
+*.jks
+*.keystore
 
 # Python
 __pycache__/
