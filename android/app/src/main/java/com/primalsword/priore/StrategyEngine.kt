@@ -29,7 +29,11 @@ class StrategyEngine(
         val bars5 = m5.toList()
         val bars15 = m15.toList()
         if (bars5.size < maxOf(atrPeriod + 2, levelLookback + 2) || bars15.size < 50) {
-            return TradePlan(SignalKind.WAIT, "Aguardando histórico suficiente.")
+            return TradePlan(
+                SignalKind.WAIT,
+                "Aguardando histórico suficiente para calcular contexto e níveis.",
+                nextTrigger = "O Priore começará a classificar o cenário quando M5 e M15 estiverem aquecidos.",
+            )
         }
 
         val current = bars5.last()
@@ -37,7 +41,11 @@ class StrategyEngine(
         val support = window.minOf { it.low }
         val resistance = window.maxOf { it.high }
         val atr = atr(bars5, atrPeriod)
-            ?: return TradePlan(SignalKind.WAIT, "ATR indisponível.")
+            ?: return TradePlan(
+                SignalKind.WAIT,
+                "ATR indisponível.",
+                nextTrigger = "Aguardar novas velas M5 para estabilizar a volatilidade.",
+            )
         val trend = m15Trend(bars15)
         val tolerance = 0.18 * atr
         val body = maxOf(current.body, atr * 0.03)
@@ -58,7 +66,13 @@ class StrategyEngine(
             val target = entry - minRr * risk
             return TradePlan(
                 kind = SignalKind.SELL_SETUP,
-                reason = "M15 baixista com rejeição/rompimento vendedor confirmado no fechamento M5.",
+                reason = if (bearishRejection) {
+                    "M15 baixista e rejeição vendedora confirmada na resistência no fechamento M5."
+                } else {
+                    "M15 baixista e perda de suporte confirmada no fechamento M5."
+                },
+                nextTrigger = "Setup confirmado. A leitura só permanece válida enquanto a estrutura vendedora não for invalidada.",
+                invalidation = "Fechamento M5 acima da região de stop técnico ${fmt(stop)} invalida esta leitura.",
                 entry = entry,
                 stop = stop,
                 target = target,
@@ -77,7 +91,13 @@ class StrategyEngine(
             val target = entry + minRr * risk
             return TradePlan(
                 kind = SignalKind.BUY_SETUP,
-                reason = "M15 altista com rejeição/rompimento comprador confirmado no fechamento M5.",
+                reason = if (bullishRejection) {
+                    "M15 altista e defesa compradora confirmada no suporte no fechamento M5."
+                } else {
+                    "M15 altista e rompimento de resistência confirmado no fechamento M5."
+                },
+                nextTrigger = "Setup confirmado. A leitura só permanece válida enquanto a estrutura compradora não for invalidada.",
+                invalidation = "Fechamento M5 abaixo da região de stop técnico ${fmt(stop)} invalida esta leitura.",
                 entry = entry,
                 stop = stop,
                 target = target,
@@ -89,9 +109,86 @@ class StrategyEngine(
             )
         }
 
+        val nearSupport = current.close <= support + 0.45 * atr &&
+            current.close >= support - 0.20 * atr
+        val nearResistance = current.close >= resistance - 0.45 * atr &&
+            current.close <= resistance + 0.20 * atr
+
+        if (trend == "bullish" && nearSupport) {
+            return TradePlan(
+                kind = SignalKind.WATCH_BUY,
+                reason = "M15 altista e preço testando a zona de suporte. Há contexto comprador, mas ainda falta confirmação no M5.",
+                nextTrigger = "Buscar fechamento M5 defendendo ${fmt(support)} com rejeição inferior; alternativamente, rompimento confirmado acima de ${fmt(resistance + 0.08 * atr)}.",
+                invalidation = "Perda limpa abaixo de ${fmt(support - 0.20 * atr)} enfraquece a tese compradora e exige reavaliação.",
+                trendM15 = trend,
+                support = support,
+                resistance = resistance,
+                atrM5 = atr,
+            )
+        }
+
+        if (trend == "bullish" && nearResistance) {
+            return TradePlan(
+                kind = SignalKind.WATCH_BUY,
+                reason = "M15 altista e preço encostando na resistência. O Priore está observando possível continuação por rompimento.",
+                nextTrigger = "Fechamento M5 acima de ${fmt(resistance + 0.08 * atr)} confirma o rompimento comprador.",
+                invalidation = "Rejeição forte da resistência e retorno abaixo de ${fmt(resistance - 0.25 * atr)} cancela o watch de rompimento.",
+                trendM15 = trend,
+                support = support,
+                resistance = resistance,
+                atrM5 = atr,
+            )
+        }
+
+        if (trend == "bearish" && nearResistance) {
+            return TradePlan(
+                kind = SignalKind.WATCH_SELL,
+                reason = "M15 baixista e preço testando a zona de resistência. Há contexto vendedor, mas ainda falta rejeição confirmada no M5.",
+                nextTrigger = "Buscar fechamento M5 rejeitando ${fmt(resistance)} com pavio superior; alternativamente, perda confirmada abaixo de ${fmt(support - 0.08 * atr)}.",
+                invalidation = "Rompimento limpo acima de ${fmt(resistance + 0.20 * atr)} enfraquece a tese vendedora e exige reavaliação.",
+                trendM15 = trend,
+                support = support,
+                resistance = resistance,
+                atrM5 = atr,
+            )
+        }
+
+        if (trend == "bearish" && nearSupport) {
+            return TradePlan(
+                kind = SignalKind.WATCH_SELL,
+                reason = "M15 baixista e preço pressionando o suporte. O Priore está observando possível continuação por rompimento.",
+                nextTrigger = "Fechamento M5 abaixo de ${fmt(support - 0.08 * atr)} confirma a perda do suporte.",
+                invalidation = "Defesa forte do suporte e recuperação acima de ${fmt(support + 0.25 * atr)} cancela o watch vendedor.",
+                trendM15 = trend,
+                support = support,
+                resistance = resistance,
+                atrM5 = atr,
+            )
+        }
+
+        val neutralAtLevel = trend == "neutral" && (nearSupport || nearResistance)
+        val reason = when {
+            neutralAtLevel && nearSupport ->
+                "M15 neutro e preço sobre o suporte. A região é relevante, mas ainda não existe vantagem direcional suficiente."
+            neutralAtLevel && nearResistance ->
+                "M15 neutro e preço sobre a resistência. A região é relevante, mas ainda não existe vantagem direcional suficiente."
+            trend == "bullish" ->
+                "M15 altista, porém o preço está no meio da faixa M5. Entrar agora reduziria a qualidade do risco/retorno."
+            trend == "bearish" ->
+                "M15 baixista, porém o preço está no meio da faixa M5. Entrar agora reduziria a qualidade do risco/retorno."
+            else ->
+                "M15 neutro e sem confirmação suficiente no fechamento M5."
+        }
+        val nextTrigger = when (trend) {
+            "bullish" -> "Aguardar aproximação do suporte ${fmt(support)} para defesa ou rompimento confirmado da resistência ${fmt(resistance)}."
+            "bearish" -> "Aguardar aproximação da resistência ${fmt(resistance)} para rejeição ou perda confirmada do suporte ${fmt(support)}."
+            else -> "Aguardar o M15 recuperar direção e o M5 confirmar defesa ou rompimento em um dos níveis da faixa."
+        }
+
         return TradePlan(
             kind = SignalKind.WAIT,
-            reason = "Sem confirmação suficiente no fechamento M5.",
+            reason = reason,
+            nextTrigger = nextTrigger,
             trendM15 = trend,
             support = support,
             resistance = resistance,
@@ -151,4 +248,6 @@ class StrategyEngine(
             else -> "neutral"
         }
     }
+
+    private fun fmt(value: Double): String = "%.2f".format(java.util.Locale.US, value)
 }
