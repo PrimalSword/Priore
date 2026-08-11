@@ -1,23 +1,44 @@
 package com.primalsword.priore
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
+import android.text.InputType
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
+import android.widget.ArrayAdapter
+import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
+import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toDrawable
 
 class MainActivity : ComponentActivity() {
+    private var receiverRegistered = false
+
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { render() }
+
+    private val stateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            render()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -27,15 +48,34 @@ class MainActivity : ComponentActivity() {
         render()
     }
 
-    override fun onResume() {
-        super.onResume()
+    override fun onStart() {
+        super.onStart()
+        if (!receiverRegistered) {
+            ContextCompat.registerReceiver(
+                this,
+                stateReceiver,
+                IntentFilter(PrioreMonitorService.ACTION_STATE_CHANGED),
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+            receiverRegistered = true
+        }
         render()
     }
 
-    private fun render() {
-        val scroll = ScrollView(this).apply {
-            setBackgroundColor(Color.rgb(15, 17, 20))
+    override fun onStop() {
+        if (receiverRegistered) {
+            unregisterReceiver(stateReceiver)
+            receiverRegistered = false
         }
+        super.onStop()
+    }
+
+    private fun render() {
+        val monitor = SignalStore.loadMonitor(this)
+        val credentials = CredentialStore.load(this)
+        val signal = SignalStore.loadSignal(this)
+
+        val scroll = ScrollView(this).apply { setBackgroundColor(Color.rgb(15, 17, 20)) }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(22), dp(28), dp(22), dp(40))
@@ -43,19 +83,51 @@ class MainActivity : ComponentActivity() {
         scroll.addView(root)
 
         root.addView(text("PRIORE", 30, true))
-        root.addView(text("Assistente de mercado · XAUUSD", 15, false, Color.LTGRAY).withTop(4))
+        root.addView(text("Assistente local de mercado · XAUUSD", 15, false, Color.LTGRAY).withTop(4))
 
-        val configured = PrioreApp.firebaseConfigReady()
-        root.addView(
-            card(
-                "Monitoramento",
-                if (configured) "Notificações conectadas · M5 + M15" else "Firebase ainda não configurado neste aparelho",
-            ).withTop(24),
-        )
+        val stateBody = buildString {
+            append(if (monitor.running) "ATIVO" else "PARADO")
+            append("\n").append(monitor.status)
+            if (monitor.latestPrice.isNotBlank()) append("\n\nXAUUSD: ").append(monitor.latestPrice)
+            if (monitor.lastM5Close.isNotBlank()) append("\nÚltimo M5: ").append(monitor.lastM5Close)
+            if (credentials != null) append("\nAmbiente: ").append(credentials.environment.uppercase())
+        }
+        root.addView(card("Monitoramento", stateBody).withTop(24))
 
-        val signal = SignalStore.load(this)
+        val configure = Button(this).apply {
+            text = if (credentials == null) "Configurar cTrader" else "Atualizar credenciais cTrader"
+            setOnClickListener { showCredentialsDialog(credentials) }
+        }
+        root.addView(configure.withTop(16))
+
+        val start = Button(this).apply {
+            text = "Iniciar monitoramento"
+            isEnabled = credentials != null && !monitor.running
+            setOnClickListener {
+                ContextCompat.startForegroundService(
+                    this@MainActivity,
+                    Intent(this@MainActivity, PrioreMonitorService::class.java)
+                        .setAction(PrioreMonitorService.ACTION_START),
+                )
+                Toast.makeText(this@MainActivity, "Priore iniciando…", Toast.LENGTH_SHORT).show()
+            }
+        }
+        root.addView(start.withTop(10))
+
+        val stop = Button(this).apply {
+            text = "Parar monitoramento"
+            isEnabled = monitor.running
+            setOnClickListener {
+                startService(
+                    Intent(this@MainActivity, PrioreMonitorService::class.java)
+                        .setAction(PrioreMonitorService.ACTION_STOP),
+                )
+            }
+        }
+        root.addView(stop.withTop(8))
+
         if (signal == null) {
-            root.addView(card("Último sinal", "Nenhum sinal recebido ainda.").withTop(14))
+            root.addView(card("Leitura técnica", "Nenhum fechamento M5 analisado ainda.").withTop(18))
         } else {
             val details = buildString {
                 append(signal.reason)
@@ -68,25 +140,111 @@ class MainActivity : ComponentActivity() {
                 if (signal.atrM5.isNotBlank()) append("\nATR M5: ").append(signal.atrM5)
                 if (signal.timestamp.isNotBlank()) append("\n\n").append(signal.timestamp)
             }
-            root.addView(card(signal.kind.replace('_', ' '), details).withTop(14))
+            root.addView(card(signal.kind.replace('_', ' '), details).withTop(18))
         }
 
         root.addView(
             text(
-                "O Priore analisa velas fechadas no servidor e envia o alerta para este aparelho. Nesta versão ele não executa ordens.",
+                "O Priore conecta este aparelho diretamente à cTrader, analisa M5/M15 e gera alertas locais. Não executa ordens.",
                 13,
                 false,
                 Color.GRAY,
             ).withTop(22),
         )
-
         setContentView(scroll)
+    }
+
+    private fun showCredentialsDialog(existing: CTraderCredentials?) {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+        }
+        val clientId = secretField("Client ID", false, existing?.clientId.orEmpty())
+        val clientSecret = secretField(
+            if (existing == null) "Client Secret" else "Client Secret · vazio mantém o atual",
+            true,
+        )
+        val accessToken = secretField(
+            if (existing == null) "Access Token" else "Access Token · vazio mantém o atual",
+            true,
+        )
+        val refreshToken = secretField(
+            if (existing == null) "Refresh Token" else "Refresh Token · vazio mantém o atual",
+            true,
+        )
+        val environment = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                listOf("demo", "live"),
+            )
+            setSelection(if (existing?.environment == "live") 1 else 0)
+        }
+
+        listOf(clientId, clientSecret, accessToken, refreshToken).forEach { field ->
+            container.addView(field.withTop(8))
+        }
+        container.addView(text("Ambiente", 13, true, Color.DKGRAY).withTop(12))
+        container.addView(environment)
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("cTrader Open API")
+            .setView(container)
+            .setPositiveButton("Salvar", null)
+            .setNegativeButton("Cancelar", null)
+            .apply {
+                if (existing != null) setNeutralButton("Apagar", null)
+            }
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val updated = CTraderCredentials(
+                    clientId = clientId.text.toString().trim().ifBlank { existing?.clientId.orEmpty() },
+                    clientSecret = clientSecret.text.toString().trim().ifBlank { existing?.clientSecret.orEmpty() },
+                    accessToken = accessToken.text.toString().trim().ifBlank { existing?.accessToken.orEmpty() },
+                    refreshToken = refreshToken.text.toString().trim().ifBlank { existing?.refreshToken.orEmpty() },
+                    environment = environment.selectedItem.toString(),
+                )
+                if (updated.clientId.isBlank() || updated.clientSecret.isBlank() || updated.accessToken.isBlank()) {
+                    Toast.makeText(this, "Client ID, Secret e Access Token são obrigatórios.", Toast.LENGTH_LONG).show()
+                    return@setOnClickListener
+                }
+                CredentialStore.save(this, updated)
+                Toast.makeText(this, "Credenciais salvas no aparelho.", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+                render()
+            }
+            if (existing != null) {
+                dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                    if (SignalStore.loadMonitor(this).running) {
+                        Toast.makeText(this, "Pare o monitoramento antes de apagar as credenciais.", Toast.LENGTH_LONG).show()
+                    } else {
+                        CredentialStore.clear(this)
+                        dialog.dismiss()
+                        render()
+                    }
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun secretField(hint: String, password: Boolean, initial: String = ""): EditText = EditText(this).apply {
+        this.hint = hint
+        setText(initial)
+        setSingleLine(true)
+        inputType = if (password) {
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        } else {
+            InputType.TYPE_CLASS_TEXT
+        }
     }
 
     private fun card(title: String, body: String): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(18), dp(17), dp(18), dp(17))
-        background = Color.rgb(28, 31, 36).toDrawable().apply { alpha = 255 }
+        background = Color.rgb(28, 31, 36).toDrawable()
         addView(text(title, 18, true))
         addView(text(body, 14, false, Color.LTGRAY).withTop(8))
     }
@@ -104,11 +262,11 @@ class MainActivity : ComponentActivity() {
         if (bold) setTypeface(typeface, Typeface.BOLD)
     }
 
-    private fun <T : android.view.View> T.withTop(dp: Int): T {
+    private fun <T : View> T.withTop(value: Int): T {
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = this@MainActivity.dp(dp) }
+        ).apply { topMargin = dp(value) }
         return this
     }
 
