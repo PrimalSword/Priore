@@ -9,6 +9,8 @@ data class SignalSnapshot(
     val reason: String,
     val nextTrigger: String,
     val invalidation: String,
+    val confirmationPrice: String,
+    val invalidationPrice: String,
     val entry: String,
     val stop: String,
     val target: String,
@@ -38,6 +40,8 @@ object SignalStore {
             .put("reason", plan.reason)
             .put("nextTrigger", plan.nextTrigger)
             .put("invalidation", plan.invalidation)
+            .put("confirmationPrice", plan.confirmationPrice?.let(::fmt).orEmpty())
+            .put("invalidationPrice", plan.invalidationPrice?.let(::fmt).orEmpty())
             .put("entry", plan.entry?.let(::fmt).orEmpty())
             .put("stop", plan.stop?.let(::fmt).orEmpty())
             .put("target", plan.target?.let(::fmt).orEmpty())
@@ -58,6 +62,8 @@ object SignalStore {
                 reason = json.optString("reason"),
                 nextTrigger = json.optString("nextTrigger"),
                 invalidation = json.optString("invalidation"),
+                confirmationPrice = json.optString("confirmationPrice"),
+                invalidationPrice = json.optString("invalidationPrice"),
                 entry = json.optString("entry"),
                 stop = json.optString("stop"),
                 target = json.optString("target"),
