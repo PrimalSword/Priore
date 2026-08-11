@@ -29,10 +29,10 @@ object PrioreNotifications {
         manager.createNotificationChannel(
             NotificationChannel(
                 SIGNAL_CHANNEL,
-                "Sinais do ouro",
+                "Leituras do ouro",
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
-                description = "Alertas BUY/SELL gerados pelo Priore"
+                description = "Pré-alertas e setups BUY/SELL gerados pelo Priore"
                 enableVibration(true)
             },
         )
@@ -69,16 +69,19 @@ object PrioreNotifications {
     fun signal(context: Context, plan: TradePlan) {
         if (plan.kind == SignalKind.WAIT) return
         val title = when (plan.kind) {
+            SignalKind.WATCH_BUY -> "Priore · atenção para compra em XAUUSD"
+            SignalKind.WATCH_SELL -> "Priore · atenção para venda em XAUUSD"
             SignalKind.BUY_SETUP -> "Priore · possível compra em XAUUSD"
             SignalKind.SELL_SETUP -> "Priore · possível venda em XAUUSD"
             SignalKind.WAIT -> return
         }
         val body = buildString {
             append(plan.reason)
+            if (plan.nextTrigger.isNotBlank()) append("\nPara confirmar: ").append(plan.nextTrigger)
             plan.entry?.let { append("\nEntrada: ").append(fmt(it)) }
             plan.stop?.let { append(" · SL: ").append(fmt(it)) }
             plan.target?.let { append(" · TP: ").append(fmt(it)) }
-            append("\nM15: ").append(plan.trendM15)
+            append("\nM15: ").append(trendLabel(plan.trendM15))
         }
         val openIntent = PendingIntent.getActivity(
             context,
@@ -106,6 +109,12 @@ object PrioreNotifications {
         } catch (_: SecurityException) {
             // Android 13+: o usuário ainda não concedeu a permissão de notificações.
         }
+    }
+
+    private fun trendLabel(value: String): String = when (value) {
+        "bullish" -> "altista"
+        "bearish" -> "baixista"
+        else -> "neutro"
     }
 
     private fun fmt(value: Double): String = "%.2f".format(java.util.Locale.US, value)
