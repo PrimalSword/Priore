@@ -4,11 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "priore"
-version = "0.1.0"
-description = "Read-only XAUUSD M5/M15 market assistant using cTrader Open API"
+version = "0.2.0"
+description = "XAUUSD M5/M15 analysis backend for the Priore Android app"
 requires-python = ">=3.11"
 dependencies = [
   "ctrader-open-api>=0.9.2,<1.0.0",
+  "firebase-admin>=7.0,<8.0",
   "python-dotenv>=1.0,<2.0",
   "requests>=2.32,<3.0",
 ]
