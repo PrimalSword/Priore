@@ -26,10 +26,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toDrawable
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 class MainActivity : ComponentActivity() {
     private var receiverRegistered = false
-    private var updateCheckStarted = false
 
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -47,7 +49,6 @@ class MainActivity : ComponentActivity() {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         render()
-        checkForUpdates(silent = true)
     }
 
     override fun onStart() {
@@ -140,27 +141,33 @@ class MainActivity : ComponentActivity() {
         } else {
             val details = buildString {
                 append(signal.reason)
-                if (signal.trendM15.isNotBlank()) append("\n\nM15: ").append(signal.trendM15)
+                if (signal.nextTrigger.isNotBlank()) {
+                    append("\n\nPARA CONFIRMAR\n").append(signal.nextTrigger)
+                }
+                if (signal.invalidation.isNotBlank()) {
+                    append("\n\nINVALIDAÇÃO\n").append(signal.invalidation)
+                }
+                if (signal.trendM15.isNotBlank()) append("\n\nM15: ").append(trendLabel(signal.trendM15))
                 if (signal.entry.isNotBlank()) append("\nEntrada: ").append(signal.entry)
                 if (signal.stop.isNotBlank()) append("\nStop técnico: ").append(signal.stop)
                 if (signal.target.isNotBlank()) append("\nAlvo técnico: ").append(signal.target)
                 if (signal.support.isNotBlank()) append("\nSuporte: ").append(signal.support)
                 if (signal.resistance.isNotBlank()) append("\nResistência: ").append(signal.resistance)
                 if (signal.atrM5.isNotBlank()) append("\nATR M5: ").append(signal.atrM5)
-                if (signal.timestamp.isNotBlank()) append("\n\n").append(signal.timestamp)
+                if (signal.timestamp.isNotBlank()) append("\n\nAnalisado: ").append(formatTimestamp(signal.timestamp))
             }
-            root.addView(card(signal.kind.replace('_', ' '), details).withTop(18))
+            root.addView(card(signalTitle(signal.kind), details).withTop(18))
         }
 
         val update = Button(this).apply {
             text = "Verificar atualização"
-            setOnClickListener { checkForUpdates(silent = false) }
+            setOnClickListener { checkForUpdates() }
         }
         root.addView(update.withTop(18))
 
         root.addView(
             text(
-                "Versão ${BuildConfig.VERSION_NAME} · atualizações pelo GitHub",
+                "Versão ${BuildConfig.VERSION_NAME} · atualização manual pelo GitHub",
                 12,
                 false,
                 Color.GRAY,
@@ -178,33 +185,23 @@ class MainActivity : ComponentActivity() {
         setContentView(scroll)
     }
 
-    private fun checkForUpdates(silent: Boolean) {
-        if (silent && updateCheckStarted) return
-        if (silent) updateCheckStarted = true
-
-        if (!silent) {
-            Toast.makeText(this, "Consultando o GitHub…", Toast.LENGTH_SHORT).show()
-        }
-
+    private fun checkForUpdates() {
+        Toast.makeText(this, "Consultando o GitHub…", Toast.LENGTH_SHORT).show()
         UpdateManager.check(
             context = this,
             onResult = { update ->
                 if (update == null) {
-                    if (!silent) {
-                        Toast.makeText(
-                            this,
-                            "Priore já está na versão mais recente.",
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                    }
+                    Toast.makeText(
+                        this,
+                        "Priore já está na versão mais recente.",
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 } else {
                     showUpdateDialog(update)
                 }
             },
             onError = { error ->
-                if (!silent) {
-                    Toast.makeText(this, "Atualização: $error", Toast.LENGTH_LONG).show()
-                }
+                Toast.makeText(this, "Atualização: $error", Toast.LENGTH_LONG).show()
             },
         )
     }
@@ -318,6 +315,26 @@ class MainActivity : ComponentActivity() {
         }
         dialog.show()
     }
+
+    private fun signalTitle(kind: String): String = when (kind) {
+        "WATCH_BUY" -> "OBSERVAR COMPRA"
+        "WATCH_SELL" -> "OBSERVAR VENDA"
+        "BUY_SETUP" -> "POSSÍVEL COMPRA"
+        "SELL_SETUP" -> "POSSÍVEL VENDA"
+        else -> "AGUARDAR"
+    }
+
+    private fun trendLabel(value: String): String = when (value) {
+        "bullish" -> "altista"
+        "bearish" -> "baixista"
+        else -> "neutro"
+    }
+
+    private fun formatTimestamp(raw: String): String = runCatching {
+        val formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss")
+            .withZone(ZoneId.systemDefault())
+        formatter.format(Instant.parse(raw))
+    }.getOrDefault(raw)
 
     private fun secretField(hint: String, password: Boolean, initial: String = ""): EditText =
         EditText(this).apply {
