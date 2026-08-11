@@ -2,67 +2,74 @@
 
 Este arquivo concentra as próximas evoluções do Priore para evitar que melhorias discutidas durante os testes se percam entre versões.
 
-## P0 — corrigir antes de confiar em acompanhamento de setup
+## v0.5 — rodada atual
 
-- [ ] **Lifecycle persistente do setup ativo**
-  - Depois que surgir `POSSÍVEL COMPRA` ou `POSSÍVEL VENDA`, o Priore não deve esquecer o setup no candle seguinte.
-  - Persistir direção, entrada, stop, alvo, R:R, horário de criação e níveis que originaram o sinal.
-  - Enquanto o setup estiver vivo, a tela principal deve acompanhar esse mesmo setup em vez de reavaliar o candle seguinte como uma oportunidade totalmente nova.
-  - Estados sugeridos: `SETUP ATIVO`, `EM ANDAMENTO`, `ALVO ATINGIDO`, `STOP ATINGIDO`, `INVALIDADO`, `EXPIRADO`.
+- [x] **Lifecycle persistente de setup DEMO executado**
+  - Depois de `BUY_SETUP`/`SELL_SETUP`, uma operação Priore executada em DEMO permanece acompanhada até o desfecho.
+  - Persistir direção, entrada indicada, entrada efetiva, stop, alvo, R:R, horário, positionId/orderId, volume e preço atual.
+  - Impedir que o candle seguinte substitua uma operação Priore ainda aberta por um novo setup.
 
-- [ ] **Resultado automático do setup**
-  - Marcar `WIN` quando o alvo for atingido antes do stop.
-  - Marcar `LOSS` quando o stop for atingido antes do alvo.
-  - Marcar `INVALIDADO` quando a estrutura técnica definida no sinal deixar de existir antes do desfecho.
-  - Registrar o resultado localmente para futura estatística.
+- [x] **Resultado da operação DEMO pela própria cTrader**
+  - Receber eventos de execução/fechamento.
+  - Registrar `WIN`, `LOSS` ou `ERROR` no histórico local.
+  - Guardar preço de saída e P/L bruto quando fornecidos pela cTrader.
+  - Recuperar posições `PRIORE_DEMO` após reconexão usando reconcile.
+
+- [x] **Autoexecução opcional e rigidamente limitada a DEMO**
+  - Botão explícito para ativar/desativar.
+  - Uma operação Priore por vez.
+  - Ordem a mercado no menor volume permitido pelo XAUUSD da corretora.
+  - SL/TP enviados junto à ordem como proteção no servidor da cTrader.
+  - Qualquer ambiente `live` bloqueia o caminho de execução no código e desativa o toggle.
+  - Token precisa ter permissão `trading`; token somente leitura continua suficiente para monitoramento.
+
+- [x] **Contador regressivo M5/M15**
+  - Exibir `M5 fecha em mm:ss`, horário do próximo fechamento e contador secundário M15.
+  - Implementação inicial usa limites temporais do relógio do aparelho.
+
+- [x] **Distância até decisão**
+  - Em `WATCH`, mostrar distância atual até confirmação e invalidação.
+
+- [x] **Distância para suporte/resistência**
+  - Mostrar distância absoluta em dólares e distância normalizada pelo ATR.
+
+- [x] **Card de setup/operação ativo**
+  - Exibir entrada indicada/real, preço atual, P/L em pontos, SL, TP, R:R, distância para SL/TP e idade do setup.
+  - Trocar `PARA CONFIRMAR` por `STATUS DO SETUP` quando o sinal já estiver confirmado.
+
+- [x] **Resumo inicial de histórico DEMO**
+  - Total, WIN/LOSS, taxa de acerto simples e últimos resultados.
+
+## P0 — próxima rodada de calibração
 
 - [ ] **Expiração e preço perseguido**
   - Definir quando uma entrada deixa de ser executável por distância excessiva do preço original.
-  - Exibir aviso do tipo `setup tecnicamente válido, mas entrada original passou — não perseguir preço`.
-  - Não gerar um novo setup idêntico enquanto o anterior estiver ativo, salvo se houver nova estrutura objetiva.
+  - Exibir `setup tecnicamente válido, mas entrada original passou — não perseguir preço`.
+  - Não gerar setup idêntico enquanto o anterior estiver ativo, salvo nova estrutura objetiva.
 
-- [ ] **Memória de transição entre estados**
-  - Preservar contexto de `WATCH_BUY → WAIT` como tentativa compradora fracassada/rejeição.
-  - Preservar contexto de `WATCH_SELL → WAIT` como tentativa vendedora fracassada/rejeição.
+- [ ] **Memória de transição entre estados analíticos**
+  - Preservar `WATCH_BUY → WAIT` como tentativa compradora fracassada/rejeição.
+  - Preservar `WATCH_SELL → WAIT` como tentativa vendedora fracassada/rejeição.
   - Considerar cooldown de 1–2 candles antes de repetir exatamente o mesmo setup, sujeito a calibração em demo.
 
-## Próxima rodada — prioridade alta
+- [ ] **Sincronizar contador com timestamp da cTrader**
+  - Usar o relógio/timestamp do feed como referência principal em vez do relógio local.
+  - Nos últimos 30–45 segundos, destacar discretamente que o Priore aguarda fechamento.
 
-- [ ] **Contador regressivo da vela M5**
-  - Exibir `Fecha em mm:ss` no card de monitoramento.
-  - Exibir também o horário do próximo fechamento, por exemplo `Próximo fechamento: 12:05`.
-  - Preferir sincronização com a referência temporal da cTrader; usar o relógio local apenas como apoio.
-  - Nos últimos 30–45 segundos, destacar discretamente que o Priore está aguardando confirmação de fechamento.
+- [ ] **Lifecycle analítico mesmo sem autoexecução**
+  - Acompanhar um setup confirmado mesmo quando o toggle de execução DEMO estiver desligado.
+  - Permitir resultado virtual separado de resultado executado.
 
-- [ ] **Contador da vela M15**
-  - Exibir de forma secundária, sem competir visualmente com o M5.
-
-- [ ] **Distância até a decisão**
-  - Mostrar quanto falta, em dólares, para o threshold de confirmação do cenário atual.
-  - Mostrar quanto falta para a invalidação.
-  - Exemplo: `Falta +0,48 para confirmar`.
-
-- [ ] **Distância para suporte/resistência**
-  - Mostrar distância absoluta em dólares.
-  - Mostrar distância normalizada pelo ATR.
-  - Exemplo: `Suporte 4381,22 · +3,16 · 0,42 ATR`.
-
-- [ ] **Zona de decisão mais visual**
-  - Em `AGUARDAR`, explicar cenário comprador, cenário vendedor e qual evento faria o Priore mudar de estado.
-  - Preservar a regra de decisão somente com vela fechada.
-
-- [ ] **Card de setup ativo**
-  - Trocar `PARA CONFIRMAR` por `STATUS DO SETUP` quando já houver sinal confirmado.
-  - Exibir R:R inicial explicitamente.
-  - Exibir distância atual para SL e TP.
-  - Exibir há quanto tempo o sinal foi gerado.
-  - Exibir P/L teórico em pontos desde a entrada indicada, sem sugerir que houve execução real.
+- [ ] **Resultado/fechamento mais granular**
+  - Distinguir fechamento por TP, SL, manual e outros eventos da cTrader.
+  - Marcar `INVALIDADO`/`EXPIRADO` quando aplicável sem confundir com LOSS.
 
 ## Estratégia e calibração
 
-- [ ] Registrar histórico local dos estados `AGUARDAR`, `OBSERVAR COMPRA`, `OBSERVAR VENDA`, `POSSÍVEL COMPRA` e `POSSÍVEL VENDA`.
-- [ ] Registrar níveis usados em cada decisão: suporte, resistência, ATR, confirmação e invalidação.
-- [ ] Medir o comportamento posterior de cada setup para avaliar assertividade, drawdown e qualidade do R:R.
+- [ ] Registrar histórico completo das transições `AGUARDAR`, `OBSERVAR COMPRA`, `OBSERVAR VENDA`, `POSSÍVEL COMPRA` e `POSSÍVEL VENDA`.
+- [x] Registrar níveis usados na decisão atual: suporte, resistência, ATR, confirmação e invalidação.
+- [x] Começar a registrar resultado real de operações da estratégia na conta demo.
+- [ ] Medir MAE/MFE, drawdown por operação, payoff, expectativa matemática e qualidade do R:R.
 - [ ] Calibrar thresholds somente após acumular amostra real suficiente em conta demo.
 - [ ] Adicionar filtro de spread antes de qualquer sinal acionável.
 - [ ] Adicionar filtro por sessão/horário de mercado.
@@ -72,23 +79,26 @@ Este arquivo concentra as próximas evoluções do Priore para evitar que melhor
 ## UX e notificações
 
 - [ ] Melhorar hierarquia visual do card técnico para leitura em poucos segundos.
+- [ ] Criar zona de decisão com cenário comprador e vendedor lado a lado quando estiver em `AGUARDAR`.
 - [ ] Diferenciar visualmente `WATCH` de `SETUP` sem transformar a interface em árvore de Natal.
-- [ ] Pré-alerta apenas quando houver mudança efetiva de estado, evitando spam.
-- [ ] Exibir horário local da última análise e idade da leitura.
-- [ ] Criar tela simples de histórico de sinais e mudanças de estado.
+- [x] Pré-alerta somente quando houver mudança efetiva de estado, evitando spam.
+- [x] Exibir horário local da última análise e idade da leitura.
+- [ ] Criar tela dedicada de histórico; v0.5 mostra apenas resumo na tela principal.
 
 ## Atualizações do aplicativo
 
 - [x] Consulta manual de versão pelo GitHub.
-- [ ] Manter **atualização manual** enquanto o Priore estiver em fase de calibração.
+- [x] Manter **atualização manual** enquanto o Priore estiver em fase de calibração.
 - [ ] Migrar para assinatura Android estável antes de usar atualização instalada por cima da versão anterior.
 - [ ] Só considerar checagem automática de versão quando o fluxo de releases estiver maduro e previsível.
 
 ## Segurança e operação
 
-- [x] Credenciais cTrader fora do APK e do GitHub.
+- [x] Credenciais cTrader fora do código-fonte e do GitHub; armazenadas localmente no aparelho.
 - [x] Armazenamento local protegido com Android Keystore.
-- [x] Operação read-only: o Priore não envia ordens.
+- [x] Execução automática **somente em DEMO**, opt-in e hard-blocked em `live`.
+- [x] Uma operação Priore DEMO por vez.
+- [x] Menor volume permitido pelo símbolo durante a fase de teste.
 - [ ] Adicionar diagnóstico de conectividade/reconexão mais detalhado na interface.
 - [ ] Avaliar watchdog local para detectar monitoramento interrompido pelo Android/fabricante.
 
@@ -98,7 +108,7 @@ Este arquivo concentra as próximas evoluções do Priore para evitar que melhor
 - [ ] Backtesting/replay com histórico do XAUUSD.
 - [ ] Outros ativos e estratégias somente depois de o XAUUSD estar estável.
 - [ ] Avaliar backend em nuvem apenas se o requisito real passar a ser monitoramento 24/7 independente do celular.
-- [ ] Discutir execução automatizada apenas após validação estatística robusta, controles de risco e decisão explícita de produto.
+- [ ] **Não habilitar execução em LIVE durante a calibração.** Qualquer discussão futura sobre operação real exige nova revisão de risco, controles e decisão explícita do usuário.
 
 ## Princípios do Priore
 
@@ -107,4 +117,5 @@ Este arquivo concentra as próximas evoluções do Priore para evitar que melhor
 3. **Não inventar precisão estatística sem dados.**
 4. **Preservar risco/retorno e contexto M15.**
 5. **Menos alertas, mais qualidade.**
-6. **Demo e validação antes de qualquer automação operacional.**
+6. **DEMO e validação antes de qualquer discussão sobre LIVE.**
+7. **Execução de teste deve ser explicitamente opt-in, pequena e rastreável.**
