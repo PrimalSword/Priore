@@ -32,7 +32,7 @@ StrategyEngine  dashboard
 
 ## Build baseline
 
-The MVP targets the stable Android API 36 toolchain. Using the stable SDK keeps the first physical-device build predictable while the product logic is still being validated.
+The MVP targets the stable Android API 36 toolchain, with AndroidX Core 1.17 and Activity 1.11. Using the stable SDK keeps the first physical-device build predictable while the product logic is still being validated.
 
 ## Deliberate exclusions
 
