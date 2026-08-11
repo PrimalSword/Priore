@@ -15,6 +15,9 @@ import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
+import kotlin.math.pow
+import kotlin.math.roundToLong
 
 class CTraderWebSocketClient(
     private var credentials: CTraderCredentials,
@@ -26,6 +29,7 @@ class CTraderWebSocketClient(
         fun onPrice(price: Double)
         fun onHistory(timeframe: String, candles: List<Candle>)
         fun onClosedCandle(candle: Candle)
+        fun onDemoExecution(event: DemoExecutionEvent)
         fun onAuthExpired(reason: String)
         fun onError(message: String)
     }
@@ -43,6 +47,8 @@ class CTraderWebSocketClient(
     private var accountId: Long? = null
     private var symbolId: Long? = null
     private var digits: Int = 2
+    private var minVolume: Long? = null
+    private var stepVolume: Long? = null
     private var spotReady = false
     private var liveSubscribed = false
     private val historyReady = mutableSetOf<String>()
@@ -74,6 +80,53 @@ class CTraderWebSocketClient(
         worker.shutdownNow()
         http.dispatcher.executorService.shutdown()
         http.connectionPool.evictAll()
+    }
+
+    fun placeDemoMarketOrder(plan: TradePlan, setupId: String) {
+        dispatch {
+            if (credentials.environment != "demo") {
+                listener.onError("BLOQUEIO DE SEGURANÇA: autoexecução do Priore só existe em DEMO.")
+                return@dispatch
+            }
+            if (plan.kind != SignalKind.BUY_SETUP && plan.kind != SignalKind.SELL_SETUP) return@dispatch
+            val entry = plan.entry
+            val stop = plan.stop
+            val target = plan.target
+            if (entry == null || stop == null || target == null) {
+                listener.onError("Setup sem entrada/stop/alvo; ordem DEMO não enviada.")
+                return@dispatch
+            }
+            val account = accountId
+            val symbol = symbolId
+            val volume = minVolume
+            if (account == null || symbol == null || volume == null) {
+                listener.onError("cTrader ainda não está pronta para enviar ordem DEMO.")
+                return@dispatch
+            }
+
+            val slDistance = abs(stop - entry)
+            val tpDistance = abs(target - entry)
+            val relativeSl = (slDistance * 100000.0).roundToLong().coerceAtLeast(1L)
+            val relativeTp = (tpDistance * 100000.0).roundToLong().coerceAtLeast(1L)
+            val side = if (plan.kind == SignalKind.BUY_SETUP) TRADE_SIDE_BUY else TRADE_SIDE_SELL
+
+            listener.onState("Setup confirmado · enviando ordem DEMO mínima à cTrader…")
+            send(
+                NEW_ORDER_REQ,
+                JSONObject()
+                    .put("ctidTraderAccountId", account)
+                    .put("symbolId", symbol)
+                    .put("orderType", ORDER_TYPE_MARKET)
+                    .put("tradeSide", side)
+                    .put("volume", volume)
+                    .put("relativeStopLoss", relativeSl)
+                    .put("relativeTakeProfit", relativeTp)
+                    .put("label", DEMO_LABEL)
+                    .put("comment", "Priore demo $setupId")
+                    .put("clientOrderId", setupId.take(50)),
+                clientMsgId = "demo-order-$setupId",
+            )
+        }
     }
 
     private fun dispatch(block: () -> Unit) {
@@ -180,9 +233,15 @@ class CTraderWebSocketClient(
             HEARTBEAT -> Unit
             APP_AUTH_RES -> requestAccounts()
             ACCOUNTS_RES -> handleAccounts(payload)
-            ACCOUNT_AUTH_RES -> requestSymbols()
+            ACCOUNT_AUTH_RES -> {
+                requestSymbols()
+                requestReconcile()
+            }
             SYMBOLS_LIST_RES -> handleSymbols(payload)
             SYMBOL_BY_ID_RES -> handleSymbolDetails(payload)
+            RECONCILE_RES -> handleReconcile(payload)
+            EXECUTION_EVENT -> handleExecution(payload)
+            ORDER_ERROR_EVENT -> handleOrderError(payload)
             GET_TRENDBARS_RES -> handleHistory(clientMsgId, payload)
             SUBSCRIBE_SPOTS_RES -> {
                 spotReady = true
@@ -242,6 +301,15 @@ class CTraderWebSocketClient(
         )
     }
 
+    private fun requestReconcile() {
+        send(
+            RECONCILE_REQ,
+            JSONObject()
+                .put("ctidTraderAccountId", requireAccount())
+                .put("returnProtectionOrders", false),
+        )
+    }
+
     private fun handleSymbols(payload: JSONObject) {
         val target = normalizeSymbol(symbolName)
         val symbols = payload.optJSONArray("symbol") ?: JSONArray()
@@ -287,6 +355,11 @@ class CTraderWebSocketClient(
         }
 
         digits = symbol.optInt("digits", 2)
+        minVolume = symbol.flexLong("minVolume")
+        stepVolume = symbol.flexLong("stepVolume")
+        if (minVolume == null) {
+            listener.onError("XAUUSD sem minVolume informado; autoexecução DEMO ficará bloqueada.")
+        }
         listener.onState("Carregando histórico M5/M15…")
         requestHistory("M5", 300)
         requestHistory("M15", 300)
@@ -297,6 +370,81 @@ class CTraderWebSocketClient(
                 .put("symbolId", JSONArray().put(requireSymbol()))
                 .put("subscribeToSpotTimestamp", true),
         )
+    }
+
+    private fun handleReconcile(payload: JSONObject) {
+        val positions = payload.optJSONArray("position") ?: JSONArray()
+        for (index in 0 until positions.length()) {
+            val position = positions.optJSONObject(index) ?: continue
+            val tradeData = position.optJSONObject("tradeData") ?: JSONObject()
+            if (tradeData.optString("label") != DEMO_LABEL) continue
+            listener.onDemoExecution(
+                DemoExecutionEvent(
+                    executionType = EXECUTION_RECOVERED,
+                    positionId = position.flexLong("positionId"),
+                    executionPrice = position.optNullableDouble("price"),
+                    positionStatus = position.optInt("positionStatus", 1),
+                    volume = tradeData.flexLong("volume"),
+                    label = DEMO_LABEL,
+                    description = "Posição Priore DEMO recuperada após reconexão.",
+                ),
+            )
+        }
+    }
+
+    private fun handleExecution(payload: JSONObject) {
+        val position = payload.optJSONObject("position")
+        val order = payload.optJSONObject("order")
+        val deal = payload.optJSONObject("deal")
+        val positionTradeData = position?.optJSONObject("tradeData")
+        val orderTradeData = order?.optJSONObject("tradeData")
+        val label = deal?.optString("label").orEmpty()
+            .ifBlank { positionTradeData?.optString("label").orEmpty() }
+            .ifBlank { orderTradeData?.optString("label").orEmpty() }
+        if (label != DEMO_LABEL) return
+
+        val closeDetail = deal?.optJSONObject("closePositionDetail")
+        val grossProfit = closeDetail?.let { detail ->
+            val raw = detail.flexLong("grossProfit") ?: return@let null
+            val moneyDigits = detail.optInt("moneyDigits", 2)
+            raw / 10.0.pow(moneyDigits)
+        }
+        listener.onDemoExecution(
+            DemoExecutionEvent(
+                executionType = payload.optInt("executionType", -1),
+                positionId = position?.flexLong("positionId") ?: deal?.flexLong("positionId"),
+                orderId = order?.flexLong("orderId") ?: deal?.flexLong("orderId"),
+                executionPrice = deal?.optNullableDouble("executionPrice")
+                    ?: position?.optNullableDouble("price"),
+                positionStatus = position?.optInt("positionStatus", -1)?.takeIf { it >= 0 },
+                grossProfit = grossProfit,
+                volume = deal?.flexLong("filledVolume") ?: positionTradeData?.flexLong("volume"),
+                label = label,
+                errorCode = payload.optString("errorCode"),
+            ),
+        )
+    }
+
+    private fun handleOrderError(payload: JSONObject) {
+        val code = payload.optString("errorCode", "ORDER_ERROR")
+        val description = payload.optString("description")
+        listener.onDemoExecution(
+            DemoExecutionEvent(
+                executionType = EXECUTION_REJECTED,
+                positionId = payload.flexLong("positionId"),
+                orderId = payload.flexLong("orderId"),
+                label = DEMO_LABEL,
+                errorCode = code,
+                description = description,
+            ),
+        )
+        if (code.contains("PERMISSION", true) || code.contains("AUTH", true) ||
+            description.contains("permission", true) || description.contains("scope", true)
+        ) {
+            listener.onError("Token sem permissão de trading. Reautorize a Priore com scope=trading para operar apenas na DEMO.")
+        } else {
+            listener.onError("Ordem DEMO rejeitada: $code${if (description.isBlank()) "" else " · $description"}")
+        }
     }
 
     private fun requestHistory(timeframe: String, count: Int) {
@@ -444,6 +592,8 @@ class CTraderWebSocketClient(
         accountId = null
         symbolId = null
         digits = 2
+        minVolume = null
+        stepVolume = null
         spotReady = false
         liveSubscribed = false
         historyReady.clear()
@@ -489,6 +639,15 @@ class CTraderWebSocketClient(
         }
     }
 
+    private fun JSONObject.optNullableDouble(key: String): Double? {
+        if (!has(key) || isNull(key)) return null
+        return when (val value = opt(key)) {
+            is Number -> value.toDouble()
+            is String -> value.toDoubleOrNull()
+            else -> null
+        }
+    }
+
     companion object {
         private const val HEARTBEAT = 51
         private const val COMMON_ERROR_RES = 50
@@ -496,13 +655,18 @@ class CTraderWebSocketClient(
         private const val APP_AUTH_RES = 2101
         private const val ACCOUNT_AUTH_REQ = 2102
         private const val ACCOUNT_AUTH_RES = 2103
+        private const val NEW_ORDER_REQ = 2106
         private const val SYMBOLS_LIST_REQ = 2114
         private const val SYMBOLS_LIST_RES = 2115
         private const val SYMBOL_BY_ID_REQ = 2116
         private const val SYMBOL_BY_ID_RES = 2117
+        private const val RECONCILE_REQ = 2124
+        private const val RECONCILE_RES = 2125
+        private const val EXECUTION_EVENT = 2126
         private const val SUBSCRIBE_SPOTS_REQ = 2127
         private const val SUBSCRIBE_SPOTS_RES = 2128
         private const val SPOT_EVENT = 2131
+        private const val ORDER_ERROR_EVENT = 2132
         private const val SUBSCRIBE_LIVE_TRENDBAR_REQ = 2135
         private const val GET_TRENDBARS_REQ = 2137
         private const val GET_TRENDBARS_RES = 2138
@@ -510,5 +674,12 @@ class CTraderWebSocketClient(
         private const val ACCOUNTS_REQ = 2149
         private const val ACCOUNTS_RES = 2150
         private const val SUBSCRIBE_LIVE_TRENDBAR_RES = 2165
+
+        private const val ORDER_TYPE_MARKET = 1
+        private const val TRADE_SIDE_BUY = 1
+        private const val TRADE_SIDE_SELL = 2
+        private const val EXECUTION_REJECTED = 7
+        private const val EXECUTION_RECOVERED = 100
+        private const val DEMO_LABEL = "PRIORE_DEMO"
     }
 }
