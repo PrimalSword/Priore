@@ -29,6 +29,7 @@ import androidx.core.graphics.drawable.toDrawable
 
 class MainActivity : ComponentActivity() {
     private var receiverRegistered = false
+    private var updateCheckStarted = false
 
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -46,6 +47,7 @@ class MainActivity : ComponentActivity() {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         render()
+        checkForUpdates(silent = true)
     }
 
     override fun onStart() {
@@ -83,7 +85,14 @@ class MainActivity : ComponentActivity() {
         scroll.addView(root)
 
         root.addView(text("PRIORE", 30, true))
-        root.addView(text("Assistente local de mercado · XAUUSD", 15, false, Color.LTGRAY).withTop(4))
+        root.addView(
+            text(
+                "Assistente local de mercado · XAUUSD",
+                15,
+                false,
+                Color.LTGRAY,
+            ).withTop(4),
+        )
 
         val stateBody = buildString {
             append(if (monitor.running) "ATIVO" else "PARADO")
@@ -143,15 +152,87 @@ class MainActivity : ComponentActivity() {
             root.addView(card(signal.kind.replace('_', ' '), details).withTop(18))
         }
 
+        val update = Button(this).apply {
+            text = "Verificar atualização"
+            setOnClickListener { checkForUpdates(silent = false) }
+        }
+        root.addView(update.withTop(18))
+
+        root.addView(
+            text(
+                "Versão ${BuildConfig.VERSION_NAME} · atualizações pelo GitHub",
+                12,
+                false,
+                Color.GRAY,
+            ).withTop(8),
+        )
+
         root.addView(
             text(
                 "O Priore conecta este aparelho diretamente à cTrader, analisa M5/M15 e gera alertas locais. Não executa ordens.",
                 13,
                 false,
                 Color.GRAY,
-            ).withTop(22),
+            ).withTop(18),
         )
         setContentView(scroll)
+    }
+
+    private fun checkForUpdates(silent: Boolean) {
+        if (silent && updateCheckStarted) return
+        if (silent) updateCheckStarted = true
+
+        if (!silent) {
+            Toast.makeText(this, "Consultando o GitHub…", Toast.LENGTH_SHORT).show()
+        }
+
+        UpdateManager.check(
+            context = this,
+            onResult = { update ->
+                if (update == null) {
+                    if (!silent) {
+                        Toast.makeText(
+                            this,
+                            "Priore já está na versão mais recente.",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                } else {
+                    showUpdateDialog(update)
+                }
+            },
+            onError = { error ->
+                if (!silent) {
+                    Toast.makeText(this, "Atualização: $error", Toast.LENGTH_LONG).show()
+                }
+            },
+        )
+    }
+
+    private fun showUpdateDialog(update: UpdateManager.RemoteUpdate) {
+        val body = buildString {
+            append("Nova versão: ").append(update.versionName)
+            if (update.notes.isNotBlank()) append("\n\n").append(update.notes)
+            append("\n\nO APK será baixado diretamente do repositório Priore no GitHub.")
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Atualização disponível")
+            .setMessage(body)
+            .setPositiveButton("Baixar e instalar") { _, _ ->
+                UpdateManager.downloadAndInstall(
+                    context = this,
+                    update = update,
+                    onStatus = { status ->
+                        Toast.makeText(this, status, Toast.LENGTH_LONG).show()
+                    },
+                    onError = { error ->
+                        Toast.makeText(this, "Atualização: $error", Toast.LENGTH_LONG).show()
+                    },
+                )
+            }
+            .setNegativeButton("Depois", null)
+            .show()
     }
 
     private fun showCredentialsDialog(existing: CTraderCredentials?) {
@@ -207,7 +288,11 @@ class MainActivity : ComponentActivity() {
                     environment = environment.selectedItem.toString(),
                 )
                 if (updated.clientId.isBlank() || updated.clientSecret.isBlank() || updated.accessToken.isBlank()) {
-                    Toast.makeText(this, "Client ID, Secret e Access Token são obrigatórios.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        this,
+                        "Client ID, Secret e Access Token são obrigatórios.",
+                        Toast.LENGTH_LONG,
+                    ).show()
                     return@setOnClickListener
                 }
                 CredentialStore.save(this, updated)
@@ -218,7 +303,11 @@ class MainActivity : ComponentActivity() {
             if (existing != null) {
                 dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
                     if (SignalStore.loadMonitor(this).running) {
-                        Toast.makeText(this, "Pare o monitoramento antes de apagar as credenciais.", Toast.LENGTH_LONG).show()
+                        Toast.makeText(
+                            this,
+                            "Pare o monitoramento antes de apagar as credenciais.",
+                            Toast.LENGTH_LONG,
+                        ).show()
                     } else {
                         CredentialStore.clear(this)
                         dialog.dismiss()
@@ -230,16 +319,17 @@ class MainActivity : ComponentActivity() {
         dialog.show()
     }
 
-    private fun secretField(hint: String, password: Boolean, initial: String = ""): EditText = EditText(this).apply {
-        this.hint = hint
-        setText(initial)
-        setSingleLine(true)
-        inputType = if (password) {
-            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        } else {
-            InputType.TYPE_CLASS_TEXT
+    private fun secretField(hint: String, password: Boolean, initial: String = ""): EditText =
+        EditText(this).apply {
+            this.hint = hint
+            setText(initial)
+            setSingleLine(true)
+            inputType = if (password) {
+                InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            } else {
+                InputType.TYPE_CLASS_TEXT
+            }
         }
-    }
 
     private fun card(title: String, body: String): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
