@@ -29,10 +29,10 @@ object PrioreNotifications {
         manager.createNotificationChannel(
             NotificationChannel(
                 SIGNAL_CHANNEL,
-                "Leituras do ouro",
+                "Leituras e resultados do ouro",
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
-                description = "Pré-alertas e setups BUY/SELL gerados pelo Priore"
+                description = "Pré-alertas, setups e resultados DEMO gerados pelo Priore"
                 enableVibration(true)
             },
         )
@@ -83,6 +83,29 @@ object PrioreNotifications {
             plan.target?.let { append(" · TP: ").append(fmt(it)) }
             append("\nM15: ").append(trendLabel(plan.trendM15))
         }
+        notify(context, title, body)
+    }
+
+    fun demoResult(context: Context, setup: ActiveSetup) {
+        val title = when (setup.status) {
+            SetupStatus.WIN -> "Priore DEMO · WIN"
+            SetupStatus.LOSS -> "Priore DEMO · LOSS"
+            SetupStatus.ERROR -> "Priore DEMO · ordem rejeitada"
+            SetupStatus.INVALIDATED -> "Priore DEMO · setup invalidado"
+            SetupStatus.EXPIRED -> "Priore DEMO · setup expirado"
+            else -> "Priore DEMO · atualização"
+        }
+        val body = buildString {
+            append(if (setup.signalKind == SignalKind.BUY_SETUP) "Compra" else "Venda")
+            setup.actualEntry?.let { append(" · entrada real ").append(fmt(it)) }
+            setup.closePrice?.let { append(" · saída ").append(fmt(it)) }
+            setup.grossProfit?.let { append("\nP/L bruto: ").append("%.2f".format(java.util.Locale.US, it)) }
+            if (setup.note.isNotBlank()) append("\n").append(setup.note)
+        }
+        notify(context, title, body)
+    }
+
+    private fun notify(context: Context, title: String, body: String) {
         val openIntent = PendingIntent.getActivity(
             context,
             3,
