@@ -2,6 +2,17 @@ plugins {
     id("com.android.application")
 }
 
+val prioreKeystorePath = System.getenv("PRIORE_KEYSTORE_PATH")
+val prioreKeystorePassword = System.getenv("PRIORE_KEYSTORE_PASSWORD")
+val prioreKeyAlias = System.getenv("PRIORE_KEY_ALIAS")
+val prioreKeyPassword = System.getenv("PRIORE_KEY_PASSWORD")
+val hasPrioreSigning = listOf(
+    prioreKeystorePath,
+    prioreKeystorePassword,
+    prioreKeyAlias,
+    prioreKeyPassword,
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.primalsword.priore"
     compileSdk = 36
@@ -16,6 +27,26 @@ android {
 
     buildFeatures {
         buildConfig = true
+    }
+
+    if (hasPrioreSigning) {
+        signingConfigs {
+            create("prioreRelease") {
+                storeFile = file(prioreKeystorePath!!)
+                storePassword = prioreKeystorePassword
+                keyAlias = prioreKeyAlias
+                keyPassword = prioreKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            signingConfigs.findByName("prioreRelease")?.let {
+                signingConfig = it
+            }
+            isMinifyEnabled = false
+        }
     }
 
     compileOptions {
