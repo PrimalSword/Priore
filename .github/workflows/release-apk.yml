@@ -1,0 +1,104 @@
+name: signed-release-apk
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "android/**"
+      - "releases/update.json"
+      - ".github/workflows/release-apk.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: priore-signed-release
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      PRIORE_KEYSTORE_B64: ${{ secrets.PRIORE_KEYSTORE_B64 }}
+      PRIORE_KEYSTORE_PASSWORD: ${{ secrets.PRIORE_KEYSTORE_PASSWORD }}
+      PRIORE_KEY_ALIAS: ${{ secrets.PRIORE_KEY_ALIAS }}
+      PRIORE_KEY_PASSWORD: ${{ secrets.PRIORE_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check signing configuration
+        id: signing
+        shell: bash
+        run: |
+          if [[ -n "$PRIORE_KEYSTORE_B64" && -n "$PRIORE_KEYSTORE_PASSWORD" && -n "$PRIORE_KEY_ALIAS" && -n "$PRIORE_KEY_PASSWORD" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Priore signing secrets are not configured yet; signed release publishing is skipped."
+          fi
+
+      - uses: actions/setup-java@v5
+        if: steps.signing.outputs.ready == 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v4
+        if: steps.signing.outputs.ready == 'true'
+        with:
+          packages: ""
+
+      - name: Install Android SDK 36
+        if: steps.signing.outputs.ready == 'true'
+        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.signing.outputs.ready == 'true'
+        with:
+          gradle-version: "9.5.0"
+
+      - name: Restore private signing key
+        if: steps.signing.outputs.ready == 'true'
+        shell: bash
+        run: |
+          KEYSTORE="$RUNNER_TEMP/priore-release.jks"
+          printf '%s' "$PRIORE_KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
+          chmod 600 "$KEYSTORE"
+          echo "PRIORE_KEYSTORE_PATH=$KEYSTORE" >> "$GITHUB_ENV"
+
+      - name: Test and build signed release APK
+        if: steps.signing.outputs.ready == 'true'
+        working-directory: android
+        run: gradle :app:testDebugUnitTest :app:assembleRelease --stacktrace
+
+      - name: Verify APK signature
+        if: steps.signing.outputs.ready == 'true'
+        run: apksigner verify --verbose android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Upload signed release artifact
+        if: steps.signing.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: priore-signed-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
+      - name: Publish latest APK to GitHub
+        if: steps.signing.outputs.ready == 'true' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk releases/priore-latest.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add releases/priore-latest.apk
+          if git diff --cached --quiet; then
+            echo "Published APK is already current."
+            exit 0
+          fi
+          git commit -m "release: publish signed Priore APK [skip ci]"
+          git push origin HEAD:main
