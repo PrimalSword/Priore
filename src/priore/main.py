@@ -22,23 +22,33 @@ def run() -> None:
     )
     alerts = AlertSink(settings.telegram_bot_token, settings.telegram_chat_id)
 
-    # Historical bars seed the engine. Live duplicates are upserted by candle timestamp.
-    def on_candle(candle: Candle) -> None:
+    def on_history(timeframe: str, candles: list[Candle]) -> None:
+        engine.seed(timeframe, candles)
+        logging.getLogger(__name__).info(
+            "Seeded strategy with %s closed %s candles", len(candles), timeframe
+        )
+
+    def on_closed_candle(candle: Candle) -> None:
         plan = engine.on_closed_candle(candle)
         if plan is None:
             return
         logging.getLogger(__name__).info(
-            "%s close %.2f @ %s",
+            "%s closed %.2f @ %s",
             candle.timeframe,
             candle.close,
             candle.opened_at.isoformat(),
         )
-        # WAIT remains visible in logs; Telegram only receives actionable setups.
         alerts.publish(plan)
         if plan.kind != SignalKind.WAIT:
-            logging.getLogger(__name__).warning("Actionable setup detected: %s", plan.kind.value)
+            logging.getLogger(__name__).warning(
+                "Actionable setup detected: %s", plan.kind.value
+            )
 
-    service = CTraderMarketDataService(settings=settings, on_candle=on_candle)
+    service = CTraderMarketDataService(
+        settings=settings,
+        on_history=on_history,
+        on_closed_candle=on_closed_candle,
+    )
     service.start()
 
 
