@@ -30,6 +30,14 @@ StrategyEngine  dashboard
 - `PrioreNotifications`: foreground status and actionable local alerts.
 - `SignalStore`: non-secret UI/status snapshots.
 
+## Runtime safeguards
+
+- socket callbacks are serialized on one worker;
+- stale WebSocket generations cannot spawn duplicate reconnect loops;
+- live trendbar subscriptions are idempotent inside each session;
+- at quarter-hour boundaries, a newly closed M15 candle is processed before the corresponding M5 signal evaluation;
+- only closed, de-duplicated M5/M15 bars reach the strategy engine.
+
 ## Build baseline
 
 The MVP targets the stable Android API 36 toolchain, with AndroidX Core 1.17 and Activity 1.11. Using the stable SDK keeps the first physical-device build predictable while the product logic is still being validated.
