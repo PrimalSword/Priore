@@ -1,169 +1,158 @@
 # Priore
 
-Priore is an **Android XAUUSD market assistant** backed by a read-only cTrader Open API monitor.
+Priore é um **assistente Android local para XAUUSD**. Nesta fase não existe servidor, nuvem ou Firebase: o próprio celular conecta diretamente à cTrader Open API, acompanha M5/M15, analisa fechamentos de vela e gera notificações locais quando aparece um setup técnico.
 
-The backend watches M5 and M15, evaluates confirmed candle closes, and emits `WAIT`, `BUY_SETUP`, or `SELL_SETUP`. Actionable setups are pushed to the Android app through Firebase Cloud Messaging (FCM). Priore does **not** create, modify, or close trades in this MVP.
+O MVP é deliberadamente **read-only**: não cria, modifica nem encerra ordens.
 
-## Architecture
+## Arquitetura atual
 
 ```text
-cTrader Open API (demo)
+cTrader Open API
         |
-        v
-Priore backend (Python)
-- application/account auth
-- XAUUSD M5 + M15
-- closed-candle strategy
-- WAIT / BUY_SETUP / SELL_SETUP
-        |
-        v
-Firebase Cloud Messaging
-        |
+        | JSON / WebSocket :5036
         v
 Priore Android
-- native push notification
-- last-signal dashboard
+├── autenticação cTrader
+├── descoberta automática de XAUUSD
+├── histórico M5/M15
+├── spot + live trendbars
+├── StrategyEngine
+│   ├── WAIT
+│   ├── BUY_SETUP
+│   └── SELL_SETUP
+├── renovação de access token
+├── armazenamento local protegido
+└── notificações nativas Android
 ```
 
-This architecture is intentional. cTrader secrets and long-lived tokens stay on the backend instead of being embedded in the Android APK, and Android does not need to keep a permanent market-data process alive in the background.
+Enquanto o usuário ativa o monitoramento, o Priore roda como **foreground service** e mantém uma notificação persistente. O serviço não inicia sozinho no boot e pode ser interrompido a qualquer momento pelo aplicativo ou pela ação `Parar` da própria notificação.
 
-## Repository layout
+## Segurança
+
+Nenhuma credencial cTrader é incluída no código, APK ou GitHub.
+
+Na primeira execução, o usuário informa no próprio aparelho:
+
+- Client ID;
+- Client Secret;
+- Access Token;
+- Refresh Token;
+- ambiente `demo` ou `live`.
+
+Os valores sensíveis são cifrados localmente com uma chave AES/GCM mantida no **Android Keystore**. O backup do aplicativo está desativado. O Client Secret continua necessariamente disponível em tempo de execução no aparelho, portanto um dispositivo comprometido/rootado não deve ser considerado um cofre inviolável.
+
+O repositório é público: **nunca coloque tokens, secrets, keystores ou credenciais em arquivos versionados.**
+
+## Fluxo cTrader
+
+O cliente Android usa o endpoint JSON/WebSocket da cTrader:
+
+- demo: `wss://demo.ctraderapi.com:5036/`;
+- live: `wss://live.ctraderapi.com:5036/`.
+
+O fluxo implementado é:
+
+1. autenticação da aplicação;
+2. descoberta das contas autorizadas pelo access token;
+3. autenticação da conta do ambiente selecionado;
+4. lista e resolução automática de `XAUUSD`;
+5. carregamento de 300 candles históricos M5 e M15;
+6. assinatura do spot;
+7. assinatura das trendbars M5 e M15;
+8. heartbeat a cada 10 segundos;
+9. reconexão automática em caso de queda;
+10. renovação do access token usando o refresh token quando a API indicar expiração.
+
+Nenhuma mensagem de execução de ordem faz parte do cliente.
+
+## Estratégia v0.2
+
+A estratégia atual é uma baseline para validação em demo:
+
+- M15: filtro de regime com EMA20/EMA50;
+- M5: ATR(14);
+- M5: suporte/resistência dos 12 candles anteriores;
+- `SELL_SETUP`: M15 baixista + rejeição de resistência ou rompimento vendedor confirmado;
+- `BUY_SETUP`: M15 altista + rejeição de suporte ou rompimento comprador confirmado;
+- relação risco/retorno mínima: 1,8;
+- decisão somente após fechamento M5 confirmado.
+
+Quando não há confirmação suficiente, o resultado é `WAIT` e não existe notificação de sinal.
+
+## Android
+
+Requisitos do projeto:
+
+- Android Studio atual;
+- JDK 17;
+- Android SDK 37;
+- AGP 9.3.1;
+- Gradle 9.5.0.
+
+Abra a pasta `android/` no Android Studio e sincronize o projeto.
+
+O APK de debug também é compilado automaticamente pelo GitHub Actions a cada push. O workflow executa o teste unitário da estratégia antes do build e publica `app-debug.apk` como artifact do workflow.
+
+## Primeiro uso
+
+1. Instale o APK em um aparelho Android.
+2. Abra **Configurar cTrader**.
+3. Informe as credenciais já emitidas pela cTrader Open API.
+4. Mantenha `demo` durante a validação.
+5. Salve.
+6. Toque em **Iniciar monitoramento**.
+7. Conceda a permissão de notificações quando solicitada.
+8. Confirme no painel que a sequência de autenticação chegou a `Priore ativo · XAUUSD M5/M15`.
+
+A notificação persistente indica que o monitoramento está ativo. Quando um fechamento M5 produzir `BUY_SETUP` ou `SELL_SETUP`, o próprio aparelho gera uma notificação com leitura, entrada indicativa, stop técnico e alvo.
+
+## Limites do modo Android-only
+
+Este desenho é propositalmente simples para validar o produto antes de criar infraestrutura. Ele não equivale a um monitor 24/7 em servidor.
+
+O Priore deixa de monitorar se, por exemplo:
+
+- o aparelho estiver desligado;
+- ficar sem internet;
+- o usuário parar o serviço;
+- o aplicativo for forçado a parar;
+- o fabricante/sistema encerrar o processo apesar do foreground service.
+
+Por isso, esta arquitetura é adequada ao MVP e à validação da estratégia, não a uma promessa de disponibilidade contínua.
+
+## Estrutura do repositório
 
 ```text
-android/                 Native Android app
-src/priore/              cTrader analysis backend
-tests/                   Backend strategy tests
-.env.example             Backend environment template
+android/
+├── app/
+│   └── src/
+│       ├── main/java/com/primalsword/priore/
+│       │   ├── CTraderWebSocketClient.kt
+│       │   ├── CredentialStore.kt
+│       │   ├── MainActivity.kt
+│       │   ├── MarketModels.kt
+│       │   ├── PrioreApp.kt
+│       │   ├── PrioreMonitorService.kt
+│       │   ├── PrioreNotifications.kt
+│       │   ├── SignalStore.kt
+│       │   ├── StrategyEngine.kt
+│       │   └── TokenRefresher.kt
+│       └── test/
+└── build.gradle.kts
 ```
 
-## Security
+## Próximas etapas
 
-Never commit:
+1. obter um build verde no GitHub Actions;
+2. instalar o APK no aparelho físico;
+3. validar autenticação com a conta cTrader demo autorizada;
+4. conferir XAUUSD e precisão de preços da corretora;
+5. comparar candles M5/M15 do Priore com o cTrader lado a lado;
+6. registrar histórico de sinais e resultado posterior;
+7. adicionar pre-alerta de aproximação de nível;
+8. adicionar filtro de spread, sessão e notícias de alto impacto;
+9. calibrar a estratégia com dados reais antes de qualquer discussão sobre execução automática.
 
-- `CTRADER_CLIENT_SECRET`
-- `CTRADER_ACCESS_TOKEN`
-- `CTRADER_REFRESH_TOKEN`
-- Firebase Admin service-account JSON
-- `.env`
-- `android/local.properties`
-- signing keystores
+## Aviso
 
-The Android app receives only analytical signal data. It does not receive cTrader credentials.
-
-## Backend setup
-
-Python 3.11+ is recommended.
-
-```bash
-python -m venv .venv
-# Linux/macOS
-source .venv/bin/activate
-# Windows PowerShell
-# .venv\Scripts\Activate.ps1
-
-pip install -e '.[dev]'
-cp .env.example .env
-```
-
-Fill `.env` locally with the cTrader demo credentials/tokens and Firebase Admin authentication. Keep:
-
-```env
-CTRADER_ENV=demo
-CTRADER_SYMBOL=XAUUSD
-FIREBASE_TOPIC=priore-xau
-```
-
-For Firebase Admin, use one of these approaches:
-
-1. Application Default Credentials on Google Cloud.
-2. `GOOGLE_APPLICATION_CREDENTIALS` pointing to a private service-account JSON file.
-3. `FIREBASE_SERVICE_ACCOUNT_JSON` in the deployment secret store.
-
-Run:
-
-```bash
-priore
-```
-
-The backend seeds historical M5/M15 candles, subscribes to XAUUSD spot/live trendbars, evaluates only closed M5 candles, and sends FCM only for actionable setups. `WAIT` remains in logs.
-
-## Android setup
-
-The Android project targets API 37 and uses Firebase Cloud Messaging. Open the `android/` directory in Android Studio.
-
-Copy:
-
-```text
-android/local.properties.example
-```
-
-to:
-
-```text
-android/local.properties
-```
-
-Then add the Firebase Android app's public client configuration:
-
-```properties
-FIREBASE_APP_ID=
-FIREBASE_API_KEY=
-FIREBASE_PROJECT_ID=
-FIREBASE_SENDER_ID=
-FIREBASE_TOPIC=priore-xau
-```
-
-These values identify the Firebase Android client. **Do not put cTrader secrets or Firebase Admin private credentials in the Android project.**
-
-The app initializes Firebase, subscribes to `priore-xau`, requests Android notification permission when required, receives high-priority FCM data messages, persists the latest signal locally, and displays a native notification.
-
-Because binary Gradle wrapper files are not generated through the GitHub connector, if the checkout has no wrapper yet, open `android/` with Android Studio or run the installed Gradle once to generate it:
-
-```bash
-gradle wrapper --gradle-version 9.5.0
-```
-
-Then build with:
-
-```bash
-./gradlew assembleDebug
-```
-
-On Windows:
-
-```powershell
-.\gradlew.bat assembleDebug
-```
-
-## Strategy v0.1
-
-- M15 trend: EMA20/EMA50 regime filter.
-- M5 volatility: ATR(14).
-- M5 structure: rolling support/resistance.
-- SELL setup: bearish M15 plus bearish rejection or confirmed support break.
-- BUY setup: bullish M15 plus bullish rejection or confirmed resistance break.
-- Minimum target uses a configurable risk/reward ratio.
-- Decisions are generated on confirmed M5 closes.
-
-These rules are a validation baseline, not a claim of profitability.
-
-## Tests
-
-```bash
-pytest -q
-ruff check src tests
-```
-
-## Next milestones
-
-1. Connect the real authorized cTrader demo account.
-2. Create/configure the Firebase project and Android app.
-3. Validate end-to-end FCM delivery on the physical Android phone.
-4. Persist signal history and outcome metrics.
-5. Add session and high-impact-news risk gates.
-6. Add backend health/status to the Android dashboard.
-7. Backtest and calibrate the strategy before any discussion of execution automation.
-
-## Important
-
-Priore is an analytical assistant. XAUUSD is volatile and leveraged trading can produce rapid losses. The current application is deliberately read-only and does not execute orders.
+Priore é um assistente analítico. XAUUSD é altamente volátil e operações alavancadas podem gerar perdas rápidas. Nenhuma regra de análise garante lucro.
