@@ -1,35 +1,24 @@
-# Secrets
-.env
-.env.*
-!.env.example
-*.pem
-*service-account*.json
-
-# Android local configuration / build
+# Android / Gradle
+.gradle/
+**/.gradle/
+**/build/
 android/local.properties
-android/.gradle/
-android/**/build/
+local.properties
+.cxx/
+.externalNativeBuild/
+captures/
+*.apk
+*.aab
+
+# Signing / credentials
 *.jks
 *.keystore
-
-# Python
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.venv/
-venv/
-dist/
-build/
-*.egg-info/
-
-# Runtime
-*.log
-logs/
-state/
-*.sqlite3
+keystore.properties
+*.pem
 
 # IDE / OS
-.vscode/
 .idea/
+*.iml
+.vscode/
 .DS_Store
 Thumbs.db
