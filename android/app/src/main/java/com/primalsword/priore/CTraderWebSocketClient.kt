@@ -12,6 +12,7 @@ import java.math.RoundingMode
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
@@ -34,26 +35,32 @@ class CTraderWebSocketClient(
     private var socket: WebSocket? = null
     private var heartbeat: ScheduledFuture<*>? = null
     private var reconnect: ScheduledFuture<*>? = null
+
+    @Volatile
     private var manuallyClosed = false
+
+    private var generation = 0L
     private var accountId: Long? = null
     private var symbolId: Long? = null
     private var digits: Int = 2
     private var spotReady = false
+    private var liveSubscribed = false
     private val historyReady = mutableSetOf<String>()
     private val historyRequest = mutableMapOf<String, String>()
     private val lastClosedMinute = mutableMapOf<String, Long>()
 
     fun connect() {
-        worker.execute {
+        dispatch {
             manuallyClosed = false
             openSocket()
         }
     }
 
     fun replaceCredentials(value: CTraderCredentials) {
-        worker.execute {
+        dispatch {
             credentials = value
-            resetSessionState()
+            reconnect?.cancel(true)
+            heartbeat?.cancel(true)
             socket?.cancel()
             openSocket()
         }
@@ -69,15 +76,33 @@ class CTraderWebSocketClient(
         http.connectionPool.evictAll()
     }
 
+    private fun dispatch(block: () -> Unit) {
+        if (worker.isShutdown) return
+        try {
+            worker.execute(block)
+        } catch (_: RejectedExecutionException) {
+            // The monitor is already shutting down.
+        }
+    }
+
     private fun openSocket() {
         if (manuallyClosed) return
         resetSessionState()
-        val host = if (credentials.environment == "live") "live.ctraderapi.com" else "demo.ctraderapi.com"
+        reconnect = null
+        val myGeneration = ++generation
+        val host = if (credentials.environment == "live") {
+            "live.ctraderapi.com"
+        } else {
+            "demo.ctraderapi.com"
+        }
         val request = Request.Builder().url("wss://$host:5036/").build()
         listener.onState("Conectando à cTrader (${credentials.environment})…")
+
         socket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                worker.execute {
+                dispatch {
+                    if (!isCurrent(myGeneration)) return@dispatch
+                    reconnect = null
                     listener.onState("Socket conectado · autenticando aplicação…")
                     send(
                         APP_AUTH_REQ,
@@ -85,41 +110,57 @@ class CTraderWebSocketClient(
                             .put("clientId", credentials.clientId)
                             .put("clientSecret", credentials.clientSecret),
                     )
-                    startHeartbeat()
+                    startHeartbeat(myGeneration)
                 }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                worker.execute { handleMessage(text) }
+                dispatch {
+                    if (isCurrent(myGeneration)) handleMessage(text)
+                }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                worker.execute {
+                dispatch {
+                    if (!isCurrent(myGeneration)) return@dispatch
                     heartbeat?.cancel(true)
-                    listener.onError("Conexão cTrader interrompida: ${t.message ?: "erro de rede"}")
-                    scheduleReconnect()
+                    listener.onError(
+                        "Conexão cTrader interrompida: ${t.message ?: "erro de rede"}",
+                    )
+                    scheduleReconnect(myGeneration)
                 }
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                worker.execute {
+                dispatch {
+                    if (!isCurrent(myGeneration)) return@dispatch
                     heartbeat?.cancel(true)
-                    if (!manuallyClosed) scheduleReconnect()
+                    scheduleReconnect(myGeneration)
                 }
             }
         })
     }
 
-    private fun scheduleReconnect() {
-        if (manuallyClosed || reconnect?.isDone == false) return
+    private fun isCurrent(candidate: Long): Boolean = !manuallyClosed && candidate == generation
+
+    private fun scheduleReconnect(sourceGeneration: Long) {
+        if (!isCurrent(sourceGeneration) || reconnect?.isDone == false) return
         listener.onState("Desconectado · tentando novamente em 5 s…")
-        reconnect = worker.schedule({ openSocket() }, 5, TimeUnit.SECONDS)
+        reconnect = worker.schedule(
+            {
+                if (isCurrent(sourceGeneration)) openSocket()
+            },
+            5,
+            TimeUnit.SECONDS,
+        )
     }
 
-    private fun startHeartbeat() {
+    private fun startHeartbeat(sourceGeneration: Long) {
         heartbeat?.cancel(true)
         heartbeat = worker.scheduleAtFixedRate(
-            { send(HEARTBEAT, JSONObject()) },
+            {
+                if (isCurrent(sourceGeneration)) send(HEARTBEAT, JSONObject())
+            },
             10,
             10,
             TimeUnit.SECONDS,
@@ -173,9 +214,12 @@ class CTraderWebSocketClient(
             }
         }
         if (chosen == null) {
-            listener.onError("Nenhuma conta ${credentials.environment} foi autorizada por este token.")
+            listener.onError(
+                "Nenhuma conta ${credentials.environment} foi autorizada por este token.",
+            )
             return
         }
+
         accountId = chosen
         listener.onState("Conta encontrada · autenticando…")
         send(
@@ -202,6 +246,7 @@ class CTraderWebSocketClient(
         val symbols = payload.optJSONArray("symbol") ?: JSONArray()
         var id: Long? = null
         var resolvedName = ""
+
         for (index in 0 until symbols.length()) {
             val symbol = symbols.optJSONObject(index) ?: continue
             val name = symbol.optString("symbolName")
@@ -211,6 +256,7 @@ class CTraderWebSocketClient(
                 break
             }
         }
+
         if (id == null) {
             val candidates = mutableListOf<String>()
             for (index in 0 until symbols.length()) {
@@ -220,6 +266,7 @@ class CTraderWebSocketClient(
             listener.onError("XAUUSD não encontrado. Símbolos de ouro: ${candidates.take(8)}")
             return
         }
+
         symbolId = id
         listener.onState("$resolvedName encontrado · carregando detalhes…")
         send(
@@ -237,6 +284,7 @@ class CTraderWebSocketClient(
             listener.onError("A cTrader não retornou os detalhes do XAUUSD.")
             return
         }
+
         digits = symbol.optInt("digits", 2)
         listener.onState("Carregando histórico M5/M15…")
         requestHistory("M5", 300)
@@ -283,14 +331,20 @@ class CTraderWebSocketClient(
                 if (!now.isBefore(candle.openedAt.plusSeconds(duration))) add(candle)
             }
         }.sortedBy { it.openedAt }
+
         listener.onHistory(timeframe, candles)
-        candles.lastOrNull()?.let { lastClosedMinute[timeframe] = it.openedAt.epochSecond / 60L }
+        candles.lastOrNull()?.let {
+            lastClosedMinute[timeframe] = it.openedAt.epochSecond / 60L
+        }
         historyReady += timeframe
         maybeSubscribeLive()
     }
 
     private fun maybeSubscribeLive() {
+        if (liveSubscribed) return
         if (!spotReady || !historyReady.containsAll(listOf("M5", "M15"))) return
+
+        liveSubscribed = true
         for (timeframe in listOf("M5", "M15")) {
             send(
                 SUBSCRIBE_LIVE_TRENDBAR_REQ,
@@ -317,15 +371,23 @@ class CTraderWebSocketClient(
         price?.let { listener.onPrice(roundPrice(it)) }
 
         val bars = payload.optJSONArray("trendbar") ?: return
-        for (index in 0 until bars.length()) {
-            val bar = bars.optJSONObject(index) ?: continue
-            val timeframe = parsePeriod(bar.opt("period")) ?: continue
-            if (timeframe != "M5" && timeframe != "M15") continue
-            val candle = decodeTrendbar(bar, timeframe) ?: continue
+        val closedBars = buildList {
+            for (index in 0 until bars.length()) {
+                val bar = bars.optJSONObject(index) ?: continue
+                val timeframe = parsePeriod(bar.opt("period")) ?: continue
+                if (timeframe != "M5" && timeframe != "M15") continue
+                decodeTrendbar(bar, timeframe)?.let(::add)
+            }
+        }.sortedBy { candle ->
+            // At quarter-hour boundaries seed the newly closed M15 before evaluating M5.
+            if (candle.timeframe == "M15") 0 else 1
+        }
+
+        for (candle in closedBars) {
             val minute = candle.openedAt.epochSecond / 60L
-            val previous = lastClosedMinute[timeframe]
+            val previous = lastClosedMinute[candle.timeframe]
             if (previous != null && minute <= previous) continue
-            lastClosedMinute[timeframe] = minute
+            lastClosedMinute[candle.timeframe] = minute
             listener.onClosedCandle(candle)
         }
     }
@@ -333,7 +395,10 @@ class CTraderWebSocketClient(
     private fun handleError(payload: JSONObject) {
         val code = payload.optString("errorCode", "UNKNOWN")
         val description = payload.optString("description")
-        val message = listOf(code, description).filter { it.isNotBlank() }.joinToString(" · ")
+        val message = listOf(code, description)
+            .filter { it.isNotBlank() }
+            .joinToString(" · ")
+
         if (code == "OA_AUTH_TOKEN_EXPIRED" || code == "CH_ACCESS_TOKEN_INVALID") {
             listener.onAuthExpired(message)
         } else {
@@ -347,6 +412,7 @@ class CTraderWebSocketClient(
         val closeDelta = bar.flexLong("deltaClose") ?: 0L
         val highDelta = bar.flexLong("deltaHigh") ?: 0L
         val minute = bar.flexLong("utcTimestampInMinutes") ?: return null
+
         return Candle(
             timeframe = timeframe,
             openedAt = Instant.ofEpochSecond(minute * 60L),
@@ -358,11 +424,16 @@ class CTraderWebSocketClient(
         )
     }
 
-    private fun send(type: Int, payload: JSONObject, clientMsgId: String = UUID.randomUUID().toString()) {
+    private fun send(
+        type: Int,
+        payload: JSONObject,
+        clientMsgId: String = UUID.randomUUID().toString(),
+    ) {
         val envelope = JSONObject()
             .put("clientMsgId", clientMsgId)
             .put("payloadType", type)
             .put("payload", payload)
+
         if (socket?.send(envelope.toString()) != true && type != HEARTBEAT) {
             listener.onError("Não foi possível enviar mensagem à cTrader.")
         }
@@ -373,6 +444,7 @@ class CTraderWebSocketClient(
         symbolId = null
         digits = 2
         spotReady = false
+        liveSubscribed = false
         historyReady.clear()
         historyRequest.clear()
         lastClosedMinute.clear()
@@ -380,13 +452,24 @@ class CTraderWebSocketClient(
 
     private fun requireAccount(): Long = accountId ?: error("Conta ainda não autenticada")
     private fun requireSymbol(): Long = symbolId ?: error("Símbolo ainda não resolvido")
-    private fun normalizeSymbol(value: String): String = value.uppercase().filter { it.isLetterOrDigit() }
+
+    private fun normalizeSymbol(value: String): String =
+        value.uppercase().filter { it.isLetterOrDigit() }
+
     private fun roundPrice(value: Double): Double =
         BigDecimal.valueOf(value).setScale(digits, RoundingMode.HALF_UP).toDouble()
 
     private fun parsePeriod(value: Any?): String? = when (value) {
-        is String -> value.uppercase()
-        is Number -> when (value.toInt()) { 5 -> "M5"; 7 -> "M15"; else -> null }
+        is String -> when (value.uppercase()) {
+            "M5", "5" -> "M5"
+            "M15", "7" -> "M15"
+            else -> null
+        }
+        is Number -> when (value.toInt()) {
+            5 -> "M5"
+            7 -> "M15"
+            else -> null
+        }
         else -> null
     }
 
