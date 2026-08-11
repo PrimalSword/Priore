@@ -1,0 +1,6 @@
+{
+  "versionCode": 3,
+  "versionName": "0.3.0",
+  "apkUrl": "https://raw.githubusercontent.com/PrimalSword/Priore/main/releases/priore-latest.apk",
+  "notes": "Correção da conexão cTrader, ícone próprio do Priore e atualizações pelo GitHub."
+}
