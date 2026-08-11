@@ -29,6 +29,8 @@ data class TradePlan(
     val reason: String,
     val nextTrigger: String = "",
     val invalidation: String = "",
+    val confirmationPrice: Double? = null,
+    val invalidationPrice: Double? = null,
     val entry: Double? = null,
     val stop: Double? = null,
     val target: Double? = null,
@@ -37,4 +39,56 @@ data class TradePlan(
     val support: Double? = null,
     val resistance: Double? = null,
     val atrM5: Double? = null,
+)
+
+enum class SetupStatus {
+    PENDING_EXECUTION,
+    OPEN,
+    WIN,
+    LOSS,
+    INVALIDATED,
+    EXPIRED,
+    ERROR,
+}
+
+data class ActiveSetup(
+    val setupId: String,
+    val signalKind: SignalKind,
+    val status: SetupStatus,
+    val signalEntry: Double,
+    val stop: Double,
+    val target: Double,
+    val riskReward: Double,
+    val createdAt: Instant,
+    val updatedAt: Instant,
+    val actualEntry: Double? = null,
+    val currentPrice: Double? = null,
+    val positionId: Long? = null,
+    val orderId: Long? = null,
+    val volume: Long? = null,
+    val closePrice: Double? = null,
+    val grossProfit: Double? = null,
+    val note: String = "",
+) {
+    val isTerminal: Boolean
+        get() = status in setOf(
+            SetupStatus.WIN,
+            SetupStatus.LOSS,
+            SetupStatus.INVALIDATED,
+            SetupStatus.EXPIRED,
+            SetupStatus.ERROR,
+        )
+}
+
+data class DemoExecutionEvent(
+    val executionType: Int,
+    val positionId: Long? = null,
+    val orderId: Long? = null,
+    val executionPrice: Double? = null,
+    val positionStatus: Int? = null,
+    val grossProfit: Double? = null,
+    val volume: Long? = null,
+    val label: String = "",
+    val errorCode: String = "",
+    val description: String = "",
 )
