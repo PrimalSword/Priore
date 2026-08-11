@@ -30,6 +30,10 @@ StrategyEngine  dashboard
 - `PrioreNotifications`: foreground status and actionable local alerts.
 - `SignalStore`: non-secret UI/status snapshots.
 
+## Build baseline
+
+The MVP targets the stable Android API 36 toolchain. Using the stable SDK keeps the first physical-device build predictable while the product logic is still being validated.
+
 ## Deliberate exclusions
 
 The MVP has no cloud backend, Firebase dependency, remote order execution, boot receiver or automatic trading path. If a future server mode is introduced it should remain a separate transport/runtime layer instead of contaminating the strategy core.
