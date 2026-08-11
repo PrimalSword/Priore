@@ -2,6 +2,30 @@
 
 Este arquivo concentra as próximas evoluções do Priore para evitar que melhorias discutidas durante os testes se percam entre versões.
 
+## P0 — corrigir antes de confiar em acompanhamento de setup
+
+- [ ] **Lifecycle persistente do setup ativo**
+  - Depois que surgir `POSSÍVEL COMPRA` ou `POSSÍVEL VENDA`, o Priore não deve esquecer o setup no candle seguinte.
+  - Persistir direção, entrada, stop, alvo, R:R, horário de criação e níveis que originaram o sinal.
+  - Enquanto o setup estiver vivo, a tela principal deve acompanhar esse mesmo setup em vez de reavaliar o candle seguinte como uma oportunidade totalmente nova.
+  - Estados sugeridos: `SETUP ATIVO`, `EM ANDAMENTO`, `ALVO ATINGIDO`, `STOP ATINGIDO`, `INVALIDADO`, `EXPIRADO`.
+
+- [ ] **Resultado automático do setup**
+  - Marcar `WIN` quando o alvo for atingido antes do stop.
+  - Marcar `LOSS` quando o stop for atingido antes do alvo.
+  - Marcar `INVALIDADO` quando a estrutura técnica definida no sinal deixar de existir antes do desfecho.
+  - Registrar o resultado localmente para futura estatística.
+
+- [ ] **Expiração e preço perseguido**
+  - Definir quando uma entrada deixa de ser executável por distância excessiva do preço original.
+  - Exibir aviso do tipo `setup tecnicamente válido, mas entrada original passou — não perseguir preço`.
+  - Não gerar um novo setup idêntico enquanto o anterior estiver ativo, salvo se houver nova estrutura objetiva.
+
+- [ ] **Memória de transição entre estados**
+  - Preservar contexto de `WATCH_BUY → WAIT` como tentativa compradora fracassada/rejeição.
+  - Preservar contexto de `WATCH_SELL → WAIT` como tentativa vendedora fracassada/rejeição.
+  - Considerar cooldown de 1–2 candles antes de repetir exatamente o mesmo setup, sujeito a calibração em demo.
+
 ## Próxima rodada — prioridade alta
 
 - [ ] **Contador regressivo da vela M5**
@@ -26,6 +50,13 @@ Este arquivo concentra as próximas evoluções do Priore para evitar que melhor
 - [ ] **Zona de decisão mais visual**
   - Em `AGUARDAR`, explicar cenário comprador, cenário vendedor e qual evento faria o Priore mudar de estado.
   - Preservar a regra de decisão somente com vela fechada.
+
+- [ ] **Card de setup ativo**
+  - Trocar `PARA CONFIRMAR` por `STATUS DO SETUP` quando já houver sinal confirmado.
+  - Exibir R:R inicial explicitamente.
+  - Exibir distância atual para SL e TP.
+  - Exibir há quanto tempo o sinal foi gerado.
+  - Exibir P/L teórico em pontos desde a entrada indicada, sem sugerir que houve execução real.
 
 ## Estratégia e calibração
 
