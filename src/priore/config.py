@@ -20,8 +20,7 @@ class Settings:
     atr_period: int
     level_lookback: int
     min_rr: float
-    telegram_bot_token: str | None
-    telegram_chat_id: str | None
+    firebase_topic: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -51,6 +50,5 @@ class Settings:
             atr_period=int(os.getenv("ATR_PERIOD", "14")),
             level_lookback=int(os.getenv("LEVEL_LOOKBACK", "12")),
             min_rr=float(os.getenv("MIN_RR", "1.8")),
-            telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN") or None,
-            telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID") or None,
+            firebase_topic=os.getenv("FIREBASE_TOPIC", "priore-xau").strip(),
         )
