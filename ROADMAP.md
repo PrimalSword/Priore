@@ -78,6 +78,12 @@ Este arquivo concentra as próximas evoluções do Priore para evitar que melhor
 
 ## UX e notificações
 
+- [ ] **Preservar posição de rolagem durante atualização de preço**
+  - Hoje a tela pode voltar ao topo quando o preço atualiza enquanto o usuário está lendo o rodapé.
+  - Evitar reconstruir o `ScrollView` inteiro a cada atualização de preço; preferir atualizar apenas os campos que mudaram.
+  - Como solução transitória, preservar/restaurar `scrollY` quando houver re-render completo.
+  - A atualização de preço não deve interromper a leitura nem mudar a posição visual do usuário.
+
 - [ ] Melhorar hierarquia visual do card técnico para leitura em poucos segundos.
 - [ ] Criar zona de decisão com cenário comprador e vendedor lado a lado quando estiver em `AGUARDAR`.
 - [ ] Diferenciar visualmente `WATCH` de `SETUP` sem transformar a interface em árvore de Natal.
