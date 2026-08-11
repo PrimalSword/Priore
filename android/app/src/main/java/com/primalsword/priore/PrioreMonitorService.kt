@@ -16,6 +16,7 @@ class PrioreMonitorService : Service(), CTraderWebSocketClient.Listener {
     private var latestPrice: Double? = null
     private var lastM5Close: Double? = null
     private var lastPricePersistMs = 0L
+    private var lastAlertKind: SignalKind = SignalKind.WAIT
 
     override fun onCreate() {
         super.onCreate()
@@ -60,6 +61,7 @@ class PrioreMonitorService : Service(), CTraderWebSocketClient.Listener {
     private fun stopMonitoring() {
         client?.close()
         client = null
+        lastAlertKind = SignalKind.WAIT
         updateState("Monitoramento parado.", running = false)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -141,7 +143,10 @@ class PrioreMonitorService : Service(), CTraderWebSocketClient.Listener {
             lastM5Close = candle.close
             if (plan != null) {
                 SignalStore.savePlan(this, plan)
-                if (plan.kind != SignalKind.WAIT) PrioreNotifications.signal(this, plan)
+                if (plan.kind != SignalKind.WAIT && plan.kind != lastAlertKind) {
+                    PrioreNotifications.signal(this, plan)
+                }
+                lastAlertKind = plan.kind
                 updateState("M5 ${fmt(candle.close)} · ${plan.kind.name.replace('_', ' ')}")
             }
         } else {

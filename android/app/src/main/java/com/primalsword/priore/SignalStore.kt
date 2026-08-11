@@ -7,6 +7,8 @@ import java.time.Instant
 data class SignalSnapshot(
     val kind: String,
     val reason: String,
+    val nextTrigger: String,
+    val invalidation: String,
     val entry: String,
     val stop: String,
     val target: String,
@@ -34,6 +36,8 @@ object SignalStore {
         val json = JSONObject()
             .put("kind", plan.kind.name)
             .put("reason", plan.reason)
+            .put("nextTrigger", plan.nextTrigger)
+            .put("invalidation", plan.invalidation)
             .put("entry", plan.entry?.let(::fmt).orEmpty())
             .put("stop", plan.stop?.let(::fmt).orEmpty())
             .put("target", plan.target?.let(::fmt).orEmpty())
@@ -52,6 +56,8 @@ object SignalStore {
             SignalSnapshot(
                 kind = json.optString("kind", "WAIT"),
                 reason = json.optString("reason"),
+                nextTrigger = json.optString("nextTrigger"),
+                invalidation = json.optString("invalidation"),
                 entry = json.optString("entry"),
                 stop = json.optString("stop"),
                 target = json.optString("target"),

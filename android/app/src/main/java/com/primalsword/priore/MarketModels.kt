@@ -16,11 +16,19 @@ data class Candle(
     val lowerWick: Double get() = minOf(open, close) - low
 }
 
-enum class SignalKind { WAIT, BUY_SETUP, SELL_SETUP }
+enum class SignalKind {
+    WAIT,
+    WATCH_BUY,
+    WATCH_SELL,
+    BUY_SETUP,
+    SELL_SETUP,
+}
 
 data class TradePlan(
     val kind: SignalKind,
     val reason: String,
+    val nextTrigger: String = "",
+    val invalidation: String = "",
     val entry: Double? = null,
     val stop: Double? = null,
     val target: Double? = null,
