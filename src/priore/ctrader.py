@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 
 from ctrader_open_api import Client, Protobuf, TcpProtocol
 from ctrader_open_api.endpoints import EndPoints
@@ -37,13 +38,17 @@ logger = logging.getLogger(__name__)
 class CTraderMarketDataService:
     """Read-only cTrader market-data client. It never sends order messages."""
 
+    _TIMEFRAME_MINUTES = {"M5": 5, "M15": 15}
+
     def __init__(
         self,
         settings: Settings,
-        on_candle: Callable[[Candle], None],
+        on_history: Callable[[str, list[Candle]], None],
+        on_closed_candle: Callable[[Candle], None],
     ) -> None:
         self.settings = settings
-        self.on_candle = on_candle
+        self.on_history = on_history
+        self.on_closed_candle = on_closed_candle
         host = (
             EndPoints.PROTOBUF_LIVE_HOST
             if settings.environment == "live"
@@ -54,6 +59,9 @@ class CTraderMarketDataService:
         self.symbol_id: int | None = None
         self.symbol_digits = 2
         self._history_loaded: set[str] = set()
+        self._last_seeded: dict[str, datetime] = {}
+        self._last_emitted: dict[str, datetime] = {}
+        self._pending_live: dict[str, Candle] = {}
         self._subscribed = False
 
     def start(self) -> None:
@@ -76,7 +84,9 @@ class CTraderMarketDataService:
 
     def _send(self, request) -> None:
         deferred = self.client.send(request)
-        deferred.addErrback(lambda failure: logger.error("cTrader request failed: %s", failure))
+        deferred.addErrback(
+            lambda failure: logger.error("cTrader request failed: %s", failure)
+        )
 
     def _on_message(self, client, message) -> None:
         payload = message.payloadType
@@ -105,7 +115,6 @@ class CTraderMarketDataService:
             return
         if payload == ProtoOAErrorRes().payloadType:
             logger.error("cTrader API error: %s", Protobuf.extract(message))
-            return
 
     def _request_accounts(self) -> None:
         req = ProtoOAGetAccountListByAccessTokenReq()
@@ -123,7 +132,9 @@ class CTraderMarketDataService:
             chosen = matching[0] if matching else accounts[0]
             self.account_id = int(chosen.ctidTraderAccountId)
         elif not any(int(a.ctidTraderAccountId) == self.account_id for a in accounts):
-            raise RuntimeError(f"CTRADER_ACCOUNT_ID {self.account_id} is not authorized by this token")
+            raise RuntimeError(
+                f"CTRADER_ACCOUNT_ID {self.account_id} is not authorized by this token"
+            )
 
         logger.info("Using cTrader account id %s", self.account_id)
         req = ProtoOAAccountAuthReq()
@@ -143,12 +154,21 @@ class CTraderMarketDataService:
 
     def _handle_symbols(self, response) -> None:
         target = self._normalize_symbol(self.settings.symbol)
-        exact = [s for s in response.symbol if self._normalize_symbol(s.symbolName) == target]
+        exact = [
+            symbol
+            for symbol in response.symbol
+            if self._normalize_symbol(symbol.symbolName) == target
+        ]
         if not exact:
-            candidates = [s.symbolName for s in response.symbol if "XAU" in s.symbolName.upper()]
+            candidates = [
+                symbol.symbolName
+                for symbol in response.symbol
+                if "XAU" in symbol.symbolName.upper()
+            ]
             raise RuntimeError(
                 f"Symbol {self.settings.symbol!r} not found. XAU candidates: {candidates[:20]}"
             )
+
         selected = exact[0]
         self.symbol_id = int(selected.symbolId)
         logger.info("Resolved %s to symbolId=%s", selected.symbolName, self.symbol_id)
@@ -170,7 +190,7 @@ class CTraderMarketDataService:
     def _request_history(self, timeframe: str, count: int) -> None:
         period = ProtoOATrendbarPeriod.Value(timeframe)
         now_ms = int(time.time() * 1000)
-        minutes = 5 if timeframe == "M5" else 15
+        minutes = self._TIMEFRAME_MINUTES[timeframe]
         # Wider than count to tolerate market closures/weekends; count caps the response.
         from_ms = now_ms - count * minutes * 60_000 * 4
         req = ProtoOAGetTrendbarsReq()
@@ -184,18 +204,27 @@ class CTraderMarketDataService:
 
     def _handle_history(self, response) -> None:
         timeframe = ProtoOATrendbarPeriod.Name(response.period)
-        candles = [
-            Candle.from_ctrader_trendbar(bar, timeframe, self.symbol_digits)
-            for bar in response.trendbar
-        ]
-        for candle in sorted(candles, key=lambda c: c.opened_at):
-            self.on_candle(candle)
+        now = datetime.now(timezone.utc)
+        candles = sorted(
+            (
+                Candle.from_ctrader_trendbar(bar, timeframe, self.symbol_digits)
+                for bar in response.trendbar
+            ),
+            key=lambda candle: candle.opened_at,
+        )
+        closed = [candle for candle in candles if self._is_closed(candle, now)]
+        self.on_history(timeframe, closed)
+        if closed:
+            self._last_seeded[timeframe] = closed[-1].opened_at
+            self._last_emitted[timeframe] = closed[-1].opened_at
         self._history_loaded.add(timeframe)
-        logger.info("Loaded %s historical %s candles", len(candles), timeframe)
+        logger.info("Loaded %s closed historical %s candles", len(closed), timeframe)
+
         if {"M5", "M15"}.issubset(self._history_loaded) and not self._subscribed:
             self._subscribe_live()
 
     def _subscribe_live(self) -> None:
+        # cTrader requires spot subscription before live trendbar subscription.
         spot = ProtoOASubscribeSpotsReq()
         spot.ctidTraderAccountId = self._require_account()
         spot.symbolId.append(self._require_symbol())
@@ -214,12 +243,39 @@ class CTraderMarketDataService:
     def _handle_spot(self, event) -> None:
         if int(event.symbolId) != self._require_symbol():
             return
+
+        now = datetime.now(timezone.utc)
         for bar in event.trendbar:
             timeframe = ProtoOATrendbarPeriod.Name(bar.period)
-            if timeframe not in {"M5", "M15"}:
+            if timeframe not in self._TIMEFRAME_MINUTES:
                 continue
             candle = Candle.from_ctrader_trendbar(bar, timeframe, self.symbol_digits)
-            self.on_candle(candle)
+            self._process_live_candle(candle, now)
+
+    def _process_live_candle(self, candle: Candle, now: datetime) -> None:
+        timeframe = candle.timeframe
+        pending = self._pending_live.get(timeframe)
+
+        if pending and pending.opened_at < candle.opened_at:
+            if self._is_closed(pending, now):
+                self._emit_closed(pending)
+            self._pending_live.pop(timeframe, None)
+
+        if self._is_closed(candle, now):
+            self._emit_closed(candle)
+        else:
+            self._pending_live[timeframe] = candle
+
+    def _emit_closed(self, candle: Candle) -> None:
+        last = self._last_emitted.get(candle.timeframe)
+        if last is not None and candle.opened_at <= last:
+            return
+        self._last_emitted[candle.timeframe] = candle.opened_at
+        self.on_closed_candle(candle)
+
+    def _is_closed(self, candle: Candle, now: datetime) -> bool:
+        minutes = self._TIMEFRAME_MINUTES[candle.timeframe]
+        return now >= candle.opened_at + timedelta(minutes=minutes)
 
     def _require_account(self) -> int:
         if self.account_id is None:
