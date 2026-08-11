@@ -73,6 +73,8 @@ class StrategyEngine(
                 },
                 nextTrigger = "Setup confirmado. A leitura só permanece válida enquanto a estrutura vendedora não for invalidada.",
                 invalidation = "Fechamento M5 acima da região de stop técnico ${fmt(stop)} invalida esta leitura.",
+                confirmationPrice = entry,
+                invalidationPrice = stop,
                 entry = entry,
                 stop = stop,
                 target = target,
@@ -98,6 +100,8 @@ class StrategyEngine(
                 },
                 nextTrigger = "Setup confirmado. A leitura só permanece válida enquanto a estrutura compradora não for invalidada.",
                 invalidation = "Fechamento M5 abaixo da região de stop técnico ${fmt(stop)} invalida esta leitura.",
+                confirmationPrice = entry,
+                invalidationPrice = stop,
                 entry = entry,
                 stop = stop,
                 target = target,
@@ -115,11 +119,15 @@ class StrategyEngine(
             current.close <= resistance + 0.20 * atr
 
         if (trend == "bullish" && nearSupport) {
+            val confirm = support + 0.12 * atr
+            val invalidate = support - 0.20 * atr
             return TradePlan(
                 kind = SignalKind.WATCH_BUY,
                 reason = "M15 altista e preço testando a zona de suporte. Há contexto comprador, mas ainda falta confirmação no M5.",
                 nextTrigger = "Buscar fechamento M5 defendendo ${fmt(support)} com rejeição inferior; alternativamente, rompimento confirmado acima de ${fmt(resistance + 0.08 * atr)}.",
-                invalidation = "Perda limpa abaixo de ${fmt(support - 0.20 * atr)} enfraquece a tese compradora e exige reavaliação.",
+                invalidation = "Perda limpa abaixo de ${fmt(invalidate)} enfraquece a tese compradora e exige reavaliação.",
+                confirmationPrice = confirm,
+                invalidationPrice = invalidate,
                 trendM15 = trend,
                 support = support,
                 resistance = resistance,
@@ -128,11 +136,15 @@ class StrategyEngine(
         }
 
         if (trend == "bullish" && nearResistance) {
+            val confirm = resistance + 0.08 * atr
+            val invalidate = resistance - 0.25 * atr
             return TradePlan(
                 kind = SignalKind.WATCH_BUY,
                 reason = "M15 altista e preço encostando na resistência. O Priore está observando possível continuação por rompimento.",
-                nextTrigger = "Fechamento M5 acima de ${fmt(resistance + 0.08 * atr)} confirma o rompimento comprador.",
-                invalidation = "Rejeição forte da resistência e retorno abaixo de ${fmt(resistance - 0.25 * atr)} cancela o watch de rompimento.",
+                nextTrigger = "Fechamento M5 acima de ${fmt(confirm)} confirma o rompimento comprador.",
+                invalidation = "Rejeição forte da resistência e retorno abaixo de ${fmt(invalidate)} cancela o watch de rompimento.",
+                confirmationPrice = confirm,
+                invalidationPrice = invalidate,
                 trendM15 = trend,
                 support = support,
                 resistance = resistance,
@@ -141,11 +153,15 @@ class StrategyEngine(
         }
 
         if (trend == "bearish" && nearResistance) {
+            val confirm = resistance - 0.12 * atr
+            val invalidate = resistance + 0.20 * atr
             return TradePlan(
                 kind = SignalKind.WATCH_SELL,
                 reason = "M15 baixista e preço testando a zona de resistência. Há contexto vendedor, mas ainda falta rejeição confirmada no M5.",
                 nextTrigger = "Buscar fechamento M5 rejeitando ${fmt(resistance)} com pavio superior; alternativamente, perda confirmada abaixo de ${fmt(support - 0.08 * atr)}.",
-                invalidation = "Rompimento limpo acima de ${fmt(resistance + 0.20 * atr)} enfraquece a tese vendedora e exige reavaliação.",
+                invalidation = "Rompimento limpo acima de ${fmt(invalidate)} enfraquece a tese vendedora e exige reavaliação.",
+                confirmationPrice = confirm,
+                invalidationPrice = invalidate,
                 trendM15 = trend,
                 support = support,
                 resistance = resistance,
@@ -154,11 +170,15 @@ class StrategyEngine(
         }
 
         if (trend == "bearish" && nearSupport) {
+            val confirm = support - 0.08 * atr
+            val invalidate = support + 0.25 * atr
             return TradePlan(
                 kind = SignalKind.WATCH_SELL,
                 reason = "M15 baixista e preço pressionando o suporte. O Priore está observando possível continuação por rompimento.",
-                nextTrigger = "Fechamento M5 abaixo de ${fmt(support - 0.08 * atr)} confirma a perda do suporte.",
-                invalidation = "Defesa forte do suporte e recuperação acima de ${fmt(support + 0.25 * atr)} cancela o watch vendedor.",
+                nextTrigger = "Fechamento M5 abaixo de ${fmt(confirm)} confirma a perda do suporte.",
+                invalidation = "Defesa forte do suporte e recuperação acima de ${fmt(invalidate)} cancela o watch vendedor.",
+                confirmationPrice = confirm,
+                invalidationPrice = invalidate,
                 trendM15 = trend,
                 support = support,
                 resistance = resistance,
