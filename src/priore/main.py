@@ -20,7 +20,7 @@ def run() -> None:
         level_lookback=settings.level_lookback,
         min_rr=settings.min_rr,
     )
-    alerts = AlertSink(settings.telegram_bot_token, settings.telegram_chat_id)
+    alerts = AlertSink(settings.firebase_topic)
 
     def on_history(timeframe: str, candles: list[Candle]) -> None:
         engine.seed(timeframe, candles)
