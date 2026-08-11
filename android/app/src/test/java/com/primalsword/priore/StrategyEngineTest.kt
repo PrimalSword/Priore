@@ -55,6 +55,8 @@ class StrategyEngineTest {
         assertTrue(plan.stop!! > plan.entry!!)
         assertTrue(plan.target!! < plan.entry!!)
         assertEquals(2.0, plan.riskReward!!, 0.0001)
+        assertEquals(plan.entry!!, plan.confirmationPrice!!, 0.0001)
+        assertEquals(plan.stop!!, plan.invalidationPrice!!, 0.0001)
     }
 
     @Test
@@ -87,5 +89,8 @@ class StrategyEngineTest {
         assertEquals(SignalKind.WATCH_BUY, plan!!.kind)
         assertTrue(plan.nextTrigger.isNotBlank())
         assertTrue(plan.invalidation.isNotBlank())
+        assertNotNull(plan.confirmationPrice)
+        assertNotNull(plan.invalidationPrice)
+        assertTrue(plan.invalidationPrice!! < plan.confirmationPrice!!)
     }
 }
