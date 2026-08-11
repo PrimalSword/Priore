@@ -56,4 +56,36 @@ class StrategyEngineTest {
         assertTrue(plan.target!! < plan.entry!!)
         assertEquals(2.0, plan.riskReward!!, 0.0001)
     }
+
+    @Test
+    fun watchesBuyNearSupportBeforeConfirmation() {
+        val engine = StrategyEngine(levelLookback = 12)
+
+        val m15 = (0 until 70).map { index ->
+            val close = 4300.0 + index * 1.5
+            candle("M15", index * 15L, close - 0.5, close + 1.0, close - 1.0, close)
+        }
+        engine.seed("M15", m15)
+
+        val m5 = (0 until 30).map { index ->
+            val close = 4380.0 + (index % 3) * 0.20
+            candle("M5", index * 5L, close, close + 0.50, close - 0.50, close)
+        }
+        engine.seed("M5", m5)
+
+        val last = candle(
+            "M5",
+            30 * 5L,
+            4379.90,
+            4380.10,
+            4379.80,
+            4379.85,
+        )
+        val plan = engine.onClosedCandle(last)
+
+        assertNotNull(plan)
+        assertEquals(SignalKind.WATCH_BUY, plan!!.kind)
+        assertTrue(plan.nextTrigger.isNotBlank())
+        assertTrue(plan.invalidation.isNotBlank())
+    }
 }
