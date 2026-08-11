@@ -1,20 +1,6 @@
-import java.util.Properties
-
 plugins {
     id("com.android.application")
 }
-
-val localProperties = Properties().apply {
-    val file = rootProject.file("local.properties")
-    if (file.exists()) {
-        file.inputStream().use(::load)
-    }
-}
-
-fun config(name: String): String =
-    (localProperties.getProperty(name) ?: System.getenv(name) ?: "")
-        .replace("\\", "\\\\")
-        .replace("\"", "\\\"")
 
 android {
     namespace = "com.primalsword.priore"
@@ -24,18 +10,8 @@ android {
         applicationId = "com.primalsword.priore"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
-
-        buildConfigField("String", "FIREBASE_APP_ID", "\"${config("FIREBASE_APP_ID")}\"")
-        buildConfigField("String", "FIREBASE_API_KEY", "\"${config("FIREBASE_API_KEY")}\"")
-        buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${config("FIREBASE_PROJECT_ID")}\"")
-        buildConfigField("String", "FIREBASE_SENDER_ID", "\"${config("FIREBASE_SENDER_ID")}\"")
-        buildConfigField("String", "FIREBASE_TOPIC", "\"${config("FIREBASE_TOPIC").ifBlank { "priore-xau" }}\"")
-    }
-
-    buildFeatures {
-        buildConfig = true
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     compileOptions {
@@ -47,6 +23,5 @@ android {
 dependencies {
     implementation("androidx.core:core:1.19.0")
     implementation("androidx.activity:activity:1.13.0")
-    implementation(platform("com.google.firebase:firebase-bom:34.16.0"))
-    implementation("com.google.firebase:firebase-messaging")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
