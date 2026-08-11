@@ -81,7 +81,7 @@ class CTraderWebSocketClient(
         try {
             worker.execute(block)
         } catch (_: RejectedExecutionException) {
-            // The monitor is already shutting down.
+            // Monitor already shutting down.
         }
     }
 
@@ -213,6 +213,7 @@ class CTraderWebSocketClient(
                 if (chosen != null) break
             }
         }
+
         if (chosen == null) {
             listener.onError(
                 "Nenhuma conta ${credentials.environment} foi autorizada por este token.",
@@ -225,7 +226,7 @@ class CTraderWebSocketClient(
         send(
             ACCOUNT_AUTH_REQ,
             JSONObject()
-                .put("ctidTraderAccountId", chosen.toString())
+                .put("ctidTraderAccountId", chosen)
                 .put("accessToken", credentials.accessToken),
         )
     }
@@ -236,7 +237,7 @@ class CTraderWebSocketClient(
         send(
             SYMBOLS_LIST_REQ,
             JSONObject()
-                .put("ctidTraderAccountId", account.toString())
+                .put("ctidTraderAccountId", account)
                 .put("includeArchivedSymbols", false),
         )
     }
@@ -272,8 +273,8 @@ class CTraderWebSocketClient(
         send(
             SYMBOL_BY_ID_REQ,
             JSONObject()
-                .put("ctidTraderAccountId", requireAccount().toString())
-                .put("symbolId", JSONArray().put(id.toString())),
+                .put("ctidTraderAccountId", requireAccount())
+                .put("symbolId", JSONArray().put(id)),
         )
     }
 
@@ -292,8 +293,8 @@ class CTraderWebSocketClient(
         send(
             SUBSCRIBE_SPOTS_REQ,
             JSONObject()
-                .put("ctidTraderAccountId", requireAccount().toString())
-                .put("symbolId", JSONArray().put(requireSymbol().toString()))
+                .put("ctidTraderAccountId", requireAccount())
+                .put("symbolId", JSONArray().put(requireSymbol()))
                 .put("subscribeToSpotTimestamp", true),
         )
     }
@@ -304,14 +305,15 @@ class CTraderWebSocketClient(
         val from = now - count.toLong() * minutes * 60_000L * 4L
         val id = "history-$timeframe-${UUID.randomUUID()}"
         historyRequest[id] = timeframe
+
         send(
             GET_TRENDBARS_REQ,
             JSONObject()
-                .put("ctidTraderAccountId", requireAccount().toString())
-                .put("symbolId", requireSymbol().toString())
-                .put("period", timeframe)
-                .put("fromTimestamp", from.toString())
-                .put("toTimestamp", now.toString())
+                .put("ctidTraderAccountId", requireAccount())
+                .put("symbolId", requireSymbol())
+                .put("period", periodValue(timeframe))
+                .put("fromTimestamp", from)
+                .put("toTimestamp", now)
                 .put("count", count),
             clientMsgId = id,
         )
@@ -349,9 +351,9 @@ class CTraderWebSocketClient(
             send(
                 SUBSCRIBE_LIVE_TRENDBAR_REQ,
                 JSONObject()
-                    .put("ctidTraderAccountId", requireAccount().toString())
-                    .put("symbolId", requireSymbol().toString())
-                    .put("period", timeframe),
+                    .put("ctidTraderAccountId", requireAccount())
+                    .put("symbolId", requireSymbol())
+                    .put("period", periodValue(timeframe)),
             )
         }
     }
@@ -379,7 +381,6 @@ class CTraderWebSocketClient(
                 decodeTrendbar(bar, timeframe)?.let(::add)
             }
         }.sortedBy { candle ->
-            // At quarter-hour boundaries seed the newly closed M15 before evaluating M5.
             if (candle.timeframe == "M15") 0 else 1
         }
 
@@ -458,6 +459,12 @@ class CTraderWebSocketClient(
 
     private fun roundPrice(value: Double): Double =
         BigDecimal.valueOf(value).setScale(digits, RoundingMode.HALF_UP).toDouble()
+
+    private fun periodValue(timeframe: String): Int = when (timeframe.uppercase()) {
+        "M5" -> 5
+        "M15" -> 7
+        else -> error("Timeframe não suportado: $timeframe")
+    }
 
     private fun parsePeriod(value: Any?): String? = when (value) {
         is String -> when (value.uppercase()) {
