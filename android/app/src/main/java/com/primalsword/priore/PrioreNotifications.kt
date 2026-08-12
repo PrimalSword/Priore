@@ -29,10 +29,10 @@ object PrioreNotifications {
         manager.createNotificationChannel(
             NotificationChannel(
                 SIGNAL_CHANNEL,
-                "Leituras e resultados do ouro",
+                "Leituras e simulações do ouro",
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
-                description = "Pré-alertas, setups e resultados DEMO gerados pelo Priore"
+                description = "Pré-alertas, setups e resultados simulados pelo Priore"
                 enableVibration(true)
             },
         )
@@ -82,25 +82,30 @@ object PrioreNotifications {
             plan.stop?.let { append(" · SL: ").append(fmt(it)) }
             plan.target?.let { append(" · TP: ").append(fmt(it)) }
             append("\nM15: ").append(trendLabel(plan.trendM15))
+            if (plan.kind == SignalKind.BUY_SETUP || plan.kind == SignalKind.SELL_SETUP) {
+                append("\nSimulação local iniciada automaticamente.")
+            }
         }
         notify(context, title, body)
     }
 
-    fun demoResult(context: Context, setup: ActiveSetup) {
-        val title = when (setup.status) {
-            SetupStatus.WIN -> "Priore DEMO · WIN"
-            SetupStatus.LOSS -> "Priore DEMO · LOSS"
-            SetupStatus.ERROR -> "Priore DEMO · ordem rejeitada"
-            SetupStatus.INVALIDATED -> "Priore DEMO · setup invalidado"
-            SetupStatus.EXPIRED -> "Priore DEMO · setup expirado"
-            else -> "Priore DEMO · atualização"
+    fun paperResult(context: Context, trade: PaperTrade) {
+        val title = when (trade.status) {
+            PaperTradeStatus.WIN -> "Priore · simulação WIN"
+            PaperTradeStatus.LOSS -> "Priore · simulação LOSS"
+            PaperTradeStatus.OPEN -> "Priore · simulação em andamento"
         }
+        val result = trade.resultPoints()
         val body = buildString {
-            append(if (setup.signalKind == SignalKind.BUY_SETUP) "Compra" else "Venda")
-            setup.actualEntry?.let { append(" · entrada real ").append(fmt(it)) }
-            setup.closePrice?.let { append(" · saída ").append(fmt(it)) }
-            setup.grossProfit?.let { append("\nP/L bruto: ").append("%.2f".format(java.util.Locale.US, it)) }
-            if (setup.note.isNotBlank()) append("\n").append(setup.note)
+            append(if (trade.signalKind == SignalKind.BUY_SETUP) "BUY" else "SELL")
+            append(" · entrada ").append(fmt(trade.entry))
+            trade.closePrice?.let { append(" · saída ").append(fmt(it)) }
+            result?.let {
+                append("\nResultado: ")
+                if (it >= 0) append("+")
+                append(fmt(it)).append(" pontos")
+            }
+            append("\nSL: ").append(fmt(trade.stop)).append(" · TP: ").append(fmt(trade.target))
         }
         notify(context, title, body)
     }
